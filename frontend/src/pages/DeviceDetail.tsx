@@ -766,7 +766,7 @@ const DeviceDetail: Component = () => {
                             <td class="px-2 py-2.5 text-center">{wan.ssid3 ? <span class="text-emerald-400">Y</span> : <span class="text-muted">-</span>}</td>
                             <td class="px-2 py-2.5 text-center">{wan.ssid4 ? <span class="text-emerald-400">Y</span> : <span class="text-muted">-</span>}</td>
                             <td class="px-2 py-2">
-                              <Show when={wan.type.includes('PPP')} fallback={<span class="text-muted text-xs">-</span>}>
+                              <Show when={wan.type.includes('PPP') || (wan.username && wan.username !== '-')} fallback={<span class="text-muted text-xs">-</span>}>
                                 <Show when={editingPPP() === wan.index} fallback={
                                   <button
                                     onClick={() => handleEditPPP(wan.index, wan.username, wan.password)}
