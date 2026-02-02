@@ -1,0 +1,64 @@
+# Environment
+.env
+.env.local
+.env.*.local
+.miniacs.env
+
+# Backend
+backend/miniacs
+backend/tmp/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Build
+*.out
+build/
+dist/
+
+# Testing
+coverage/
+*.test
+*.spec
+
+# Temporary
+tmp/
+temp/
+*.tmp
+*.bak
+
+# PM2
+.pm2/
+ecosystem.config.js.bak
