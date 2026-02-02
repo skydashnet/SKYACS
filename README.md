@@ -1,4 +1,4 @@
-# miniACS
+# miniACS - TR-069/CWMP Management System
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Node.js Version](https://img.shields.io/badge/Node.js-20.x-339933?style=flat&logo=node.js)](https://nodejs.org/)
@@ -35,6 +35,22 @@ miniACS adalah ACS (Auto Configuration Server) ringan untuk manajemen perangkat 
 | Frontend | SolidJS + Vite |
 | Database | PostgreSQL 14+ |
 | Process Manager | PM2 |
+
+---
+
+## Requirements
+
+### Minimum System
+- **OS**: Ubuntu 20.04+ / Debian 11+ (atau distro berbasis Debian lainnya)
+- **RAM**: 1 GB
+- **Storage**: 500 MB
+- **CPU**: 1 core
+
+### Software Dependencies
+- Go 1.21+
+- Node.js 20.x
+- PostgreSQL 14+
+- PM2 (opsional, untuk production)
 
 ---
 
