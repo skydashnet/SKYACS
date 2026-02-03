@@ -20,6 +20,7 @@ type Handler struct {
 	taskRepo         *database.TaskRepository
 	parameterRepo    *database.ParameterRepository
 	provisioningRepo *database.ProvisioningRepository
+	faultRepo        *database.FaultRepository
 }
 
 func NewHandler(db *gorm.DB) *Handler {
@@ -27,12 +28,14 @@ func NewHandler(db *gorm.DB) *Handler {
 	var taskRepo *database.TaskRepository
 	var parameterRepo *database.ParameterRepository
 	var provisioningRepo *database.ProvisioningRepository
+	var faultRepo *database.FaultRepository
 
 	if db != nil {
 		deviceRepo = database.NewDeviceRepository(db)
 		taskRepo = database.NewTaskRepository(db)
 		parameterRepo = database.NewParameterRepository(db)
 		provisioningRepo = database.NewProvisioningRepository(db)
+		faultRepo = database.NewFaultRepository(db)
 	}
 
 	return &Handler{
@@ -41,6 +44,7 @@ func NewHandler(db *gorm.DB) *Handler {
 		taskRepo:         taskRepo,
 		parameterRepo:    parameterRepo,
 		provisioningRepo: provisioningRepo,
+		faultRepo:        faultRepo,
 	}
 }
 
@@ -405,15 +409,31 @@ func (h *Handler) handleTransferComplete(tc *TransferComplete) (interface{}, err
 func (h *Handler) handleFault(fault *SOAPFault) (interface{}, error) {
 	log.Printf("Received SOAP Fault: %s - %s", fault.FaultCode, fault.FaultString)
 
+	faultCode := fault.FaultCode
+	faultMessage := fault.FaultString
 	if fault.Detail.CWMPFault != nil {
 		log.Printf("  CWMP Fault: %s - %s",
 			fault.Detail.CWMPFault.FaultCode,
 			fault.Detail.CWMPFault.FaultString,
 		)
+		faultCode = fault.Detail.CWMPFault.FaultCode
+		faultMessage = fault.Detail.CWMPFault.FaultString
 	}
 
 	for _, session := range h.sessions.sessions {
 		if session.State == StateProcessingTasks {
+			// Simpan fault ke database (kecuali auto-fetch yang sering fault karena parameter tidak ada)
+			if h.faultRepo != nil && session.DeviceID > 0 && session.AutoFetchPhase == 0 {
+				deviceFault := &models.Fault{
+					DeviceID:    session.DeviceID,
+					FaultCode:   faultCode,
+					FaultString: faultMessage,
+				}
+				if err := h.faultRepo.Create(context.Background(), deviceFault); err != nil {
+					log.Printf("Error saving fault: %v", err)
+				}
+			}
+
 			// Jika sedang auto-fetch, skip ke phase berikutnya
 			if session.AutoFetchPhase > 0 {
 				log.Printf("Auto-fetch phase %d failed, continuing to next phase", session.AutoFetchPhase)
@@ -422,11 +442,7 @@ func (h *Handler) handleFault(fault *SOAPFault) (interface{}, error) {
 
 			// Mark manual task as failed
 			if session.CurrentTaskID > 0 && h.taskRepo != nil {
-				errorMsg := fault.FaultString
-				if fault.Detail.CWMPFault != nil {
-					errorMsg = fault.Detail.CWMPFault.FaultString
-				}
-				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusFailed, nil, errorMsg)
+				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusFailed, nil, faultMessage)
 			}
 			return h.getNextTask(context.Background(), session)
 		}
