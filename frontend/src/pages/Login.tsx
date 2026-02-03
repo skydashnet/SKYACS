@@ -73,7 +73,7 @@ const Login: Component = () => {
                   fill="url(#logoGrad)"
                   class="drop-shadow-lg"
                 />
-                <text x="50" y="58" text-anchor="middle" fill="white" font-size="32" font-weight="700" font-family="system-ui">M</text>
+                <text x="50" y="58" text-anchor="middle" fill="white" font-size="32" font-weight="700" font-family="system-ui">mACS</text>
               </svg>
             </div>
           </div>
@@ -140,7 +140,7 @@ const Login: Component = () => {
                     points="50,5 95,27.5 95,72.5 50,95 5,72.5 5,27.5" 
                     fill="url(#logoGradMobile)"
                   />
-                  <text x="50" y="58" text-anchor="middle" fill="white" font-size="32" font-weight="700" font-family="system-ui">M</text>
+                  <text x="50" y="58" text-anchor="middle" fill="white" font-size="30" font-weight="500" font-family="system-ui">mACS</text>
                 </svg>
               </div>
               <h1 class="text-3xl font-black text-primary">
