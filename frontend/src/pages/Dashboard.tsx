@@ -3,7 +3,7 @@ import { createResource, Show, createMemo } from 'solid-js';
 import { SolidApexCharts } from 'solid-apexcharts';
 import { api } from '../lib/api';
 import { useTheme } from '../lib/theme';
-import { TrendingUp, Wifi, Thermometer, Radio, Clock, Activity } from 'lucide-solid';
+import { Clock, Activity } from 'lucide-solid';
 import type { ApexOptions } from 'apexcharts';
 
 const Dashboard: Component = () => {
@@ -68,47 +68,6 @@ const Dashboard: Component = () => {
     return { labels, series: [{ data: series }] };
   });
 
-  // ============================================
-  // SECTION 3: Device Health Metrics (Numbers)
-  // ============================================
-  const avgUptime = createMemo(() => {
-    const data = analytics()?.uptime ?? {};
-    const weights: Record<string, number> = { '<1d': 0.5, '1-7d': 4, '7-30d': 18, '>30d': 45 };
-    let total = 0, count = 0;
-    Object.entries(data).forEach(([k, v]) => {
-      if (weights[k]) { total += weights[k] * (v as number); count += v as number; }
-    });
-    return count > 0 ? (total / count).toFixed(1) : '0';
-  });
-
-  const tempStatus = createMemo(() => {
-    const data = analytics()?.temperature ?? {};
-    const normal = (data['Normal'] as number) || 0;
-    const warning = (data['Warning'] as number) || 0;
-    const critical = (data['Critical'] as number) || 0;
-    const total = normal + warning + critical;
-    if (critical > 0) return { status: 'critical', color: 'text-rose-500', bg: 'bg-rose-500/10', count: critical, total };
-    if (warning > 0) return { status: 'warning', color: 'text-amber-500', bg: 'bg-amber-500/10', count: warning, total };
-    return { status: 'normal', color: 'text-emerald-500', bg: 'bg-emerald-500/10', count: normal, total };
-  });
-
-  const rxStatus = createMemo(() => {
-    const data = analytics()?.rxPower ?? {};
-    const good = (data['Excellent'] as number || 0) + (data['Good'] as number || 0);
-    const warning = (data['Fair'] as number) || 0;
-    const poor = (data['Poor'] as number) || 0;
-    const total = good + warning + poor;
-    if (poor > 0) return { status: 'poor', color: 'text-rose-500', bg: 'bg-rose-500/10', count: poor, total };
-    if (warning > 0) return { status: 'fair', color: 'text-amber-500', bg: 'bg-amber-500/10', count: warning, total };
-    return { status: 'good', color: 'text-emerald-500', bg: 'bg-emerald-500/10', count: good, total };
-  });
-
-  const wifiStats = createMemo(() => {
-    const data = analytics()?.wifiStations ?? {};
-    let total = 0;
-    Object.values(data).forEach(v => total += v as number);
-    return total;
-  });
 
   // ============================================
   // SECTION 4: Categorical Data (Pie Charts)
@@ -245,52 +204,69 @@ const Dashboard: Component = () => {
           </Show>
         </div>
 
-        {/* Health Metrics Row */}
-        <div class="lg:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-3">
-          {/* Avg Uptime */}
-          <div class="card p-4">
-            <div class="flex items-center gap-2 mb-2">
-              <TrendingUp size={14} class="text-muted" />
-              <span class="text-xs text-muted">Avg Uptime</span>
-            </div>
-            <p class="text-2xl font-bold text-primary font-mono">{avgUptime()}<span class="text-sm font-normal text-muted ml-1">days</span></p>
+        {/* Health Metrics Row - Mini Donut Charts */}
+        <div class="lg:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Uptime Distribution */}
+          <div class="card p-5">
+            <h3 class="text-sm font-semibold text-primary mb-1">Uptime Distribution</h3>
+            <p class="text-xs text-muted mb-3">Device uptime ranges</p>
+            <Show
+              when={Object.values(analytics()?.uptime ?? {}).some(v => (v as number) > 0)}
+              fallback={<div class="h-32 flex items-center justify-center text-muted text-sm">No data</div>}
+            >
+              <SolidApexCharts
+                type="donut"
+                options={{
+                  ...pieTheme(),
+                  labels: Object.keys(analytics()?.uptime ?? {}),
+                  colors: ['#ef4444', '#f59e0b', '#84cc16', '#10b981'],
+                }}
+                series={Object.values(analytics()?.uptime ?? {}) as number[]}
+                height={140}
+              />
+            </Show>
           </div>
 
-          {/* Temperature Status */}
-          <div class="card p-4">
-            <div class="flex items-center gap-2 mb-2">
-              <Thermometer size={14} class="text-muted" />
-              <span class="text-xs text-muted">Temperature</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class={`px-2 py-0.5 rounded text-xs font-medium ${tempStatus().bg} ${tempStatus().color}`}>
-                {tempStatus().status}
-              </span>
-              <span class="text-xs text-muted">{tempStatus().count}/{tempStatus().total}</span>
-            </div>
+          {/* Temperature Distribution */}
+          <div class="card p-5">
+            <h3 class="text-sm font-semibold text-primary mb-1">Temperature</h3>
+            <p class="text-xs text-muted mb-3">Device temperature status</p>
+            <Show
+              when={Object.values(analytics()?.temperature ?? {}).some(v => (v as number) > 0)}
+              fallback={<div class="h-32 flex items-center justify-center text-muted text-sm">No data</div>}
+            >
+              <SolidApexCharts
+                type="donut"
+                options={{
+                  ...pieTheme(),
+                  labels: Object.keys(analytics()?.temperature ?? {}),
+                  colors: ['#10b981', '#f59e0b', '#ef4444'],
+                }}
+                series={Object.values(analytics()?.temperature ?? {}) as number[]}
+                height={140}
+              />
+            </Show>
           </div>
 
-          {/* RX Power Status */}
-          <div class="card p-4">
-            <div class="flex items-center gap-2 mb-2">
-              <Radio size={14} class="text-muted" />
-              <span class="text-xs text-muted">RX Power</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class={`px-2 py-0.5 rounded text-xs font-medium ${rxStatus().bg} ${rxStatus().color}`}>
-                {rxStatus().status}
-              </span>
-              <span class="text-xs text-muted">{rxStatus().count}/{rxStatus().total}</span>
-            </div>
-          </div>
-
-          {/* WiFi Clients */}
-          <div class="card p-4">
-            <div class="flex items-center gap-2 mb-2">
-              <Wifi size={14} class="text-muted" />
-              <span class="text-xs text-muted">WiFi Clients</span>
-            </div>
-            <p class="text-2xl font-bold text-primary font-mono">{wifiStats()}</p>
+          {/* RX Power Distribution */}
+          <div class="card p-5">
+            <h3 class="text-sm font-semibold text-primary mb-1">RX Power</h3>
+            <p class="text-xs text-muted mb-3">Optical signal quality</p>
+            <Show
+              when={Object.values(analytics()?.rxPower ?? {}).some(v => (v as number) > 0)}
+              fallback={<div class="h-32 flex items-center justify-center text-muted text-sm">No data</div>}
+            >
+              <SolidApexCharts
+                type="donut"
+                options={{
+                  ...pieTheme(),
+                  labels: Object.keys(analytics()?.rxPower ?? {}),
+                  colors: ['#ef4444', '#be123c', '#6b7280', '#f59e0b', '#3b82f6'],
+                }}
+                series={Object.values(analytics()?.rxPower ?? {}) as number[]}
+                height={140}
+              />
+            </Show>
           </div>
         </div>
       </div>
