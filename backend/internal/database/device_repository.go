@@ -67,7 +67,9 @@ func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]*mode
 	}
 
 	var devices []*models.Device
-	err := r.db.WithContext(ctx).Order("last_inform DESC NULLS LAST").
+	err := r.db.WithContext(ctx).
+		Preload("Parameters", "name LIKE ? OR name LIKE ?", "%RXPower%", "%Username%").
+		Order("last_inform DESC NULLS LAST").
 		Limit(limit).
 		Offset(offset).
 		Find(&devices).Error
