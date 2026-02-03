@@ -14,6 +14,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/skydashnet/miniacs/internal/api"
 	"github.com/skydashnet/miniacs/internal/cwmp"
+	"github.com/skydashnet/miniacs/internal/database"
+	"github.com/skydashnet/miniacs/internal/models"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -37,61 +40,83 @@ func main() {
 		log.Println("Server will run without database features")
 	} else {
 		log.Println("Database connected successfully")
+		if err := runAutoMigrate(db); err != nil {
+			log.Printf("Warning: AutoMigrate failed: %v", err)
+		}
 	}
 
-	mux := http.NewServeMux()
+	cwmpPort := os.Getenv("PORT")
+	if cwmpPort == "" {
+		cwmpPort = "7547"
+	}
+	apiPort := os.Getenv("API_PORT")
+	if apiPort == "" {
+		apiPort = "7548"
+	}
 
+	cwmpMux := http.NewServeMux()
 	cwmpHandler := cwmp.NewHandler(db)
-	mux.Handle("/", cwmpHandler)
+	cwmpMux.Handle("/", cwmpHandler)
 
-	if db != nil {
-		apiRouter := api.NewRouter(db)
-		mux.Handle("/api/", http.StripPrefix("/api", apiRouter.Handler()))
-
-		watchdog := cwmp.NewDeviceWatchdog(db)
-		go watchdog.Start(ctx)
-	} else {
-		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"status":"ok","database":"disconnected"}`))
-		})
-	}
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "7547"
-	}
-
-	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
+	cwmpServer := &http.Server{
+		Addr:         ":" + cwmpPort,
+		Handler:      cwmpMux,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
 
+	var apiServer *http.Server
+	if db != nil {
+		apiMux := http.NewServeMux()
+		apiRouter := api.NewRouter(db)
+		apiMux.Handle("/", apiRouter.Handler())
+
+		apiServer = &http.Server{
+			Addr:         ":" + apiPort,
+			Handler:      apiMux,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+		}
+
+		watchdog := cwmp.NewDeviceWatchdog(db)
+		go watchdog.Start(ctx)
+	}
+
 	go func() {
-		log.Printf("miniACS server berjalan di :%s", port)
-		log.Printf("  CWMP endpoint: http://localhost:%s/", port)
-		log.Printf("  API endpoint: http://localhost:%s/api/", port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server gagal start: %v", err)
+		log.Printf("miniACS CWMP server berjalan di :%s", cwmpPort)
+		if err := cwmpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("CWMP Server gagal start: %v", err)
 		}
 	}()
+
+	if apiServer != nil {
+		go func() {
+			log.Printf("miniACS API server berjalan di :%s", apiPort)
+			if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("API Server gagal start: %v", err)
+			}
+		}()
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	log.Println("Shutting down servers...")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer shutdownCancel()
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Server shutdown failed: %v", err)
+	if err := cwmpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("CWMP Server shutdown failed: %v", err)
+	}
+	if apiServer != nil {
+		if err := apiServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("API Server shutdown failed: %v", err)
+		}
 	}
 
-	log.Println("Server stopped")
+	log.Println("Servers stopped")
 }
 
 func connectDatabase() (*gorm.DB, error) {
@@ -140,4 +165,45 @@ func connectDatabase() (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return db, nil
+}
+
+func runAutoMigrate(db *gorm.DB) error {
+	log.Println("Running database migrations...")
+	
+	allModels := []interface{}{
+		&models.Device{},
+		&models.DeviceParameter{},
+		&models.Task{},
+		&models.User{},
+		&models.Fault{},
+		&models.Firmware{},
+		&models.ProvisioningRule{},
+		&database.Setting{},
+	}
+	
+	for _, model := range allModels {
+		if err := db.AutoMigrate(model); err != nil {
+			log.Printf("Warning: AutoMigrate for %T: %v", model, err)
+		}
+	}
+	
+	var count int64
+	db.Model(&models.User{}).Count(&count)
+	if count == 0 {
+		log.Println("Creating default admin user...")
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
+		admin := &models.User{
+			Username:     "admin",
+			PasswordHash: string(hashedPassword),
+			Role:         models.RoleFull,
+		}
+		if err := db.Create(admin).Error; err != nil {
+			log.Printf("Warning: Failed to create admin user: %v", err)
+		} else {
+			log.Println("Default admin user created (username: admin, password: admin)")
+		}
+	}
+	
+	log.Println("Database migrations completed")
+	return nil
 }
