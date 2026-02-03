@@ -247,7 +247,10 @@ const Devices: Component = () => {
                 list.map((d: any) => api.connectionRequest(d.serial_number))
               );
               const successCount = results.filter((r: PromiseSettledResult<any>) => r.status === 'fulfilled').length;
-              alert(`Summon selesai: ${successCount}/${list.length} berhasil`);
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              refetch();
+              
+              alert(`Summon selesai: ${successCount}/${list.length} connection request terkirim.\nData sudah di-refresh.`);
               setSummoningAll(false);
             }}
             disabled={summoningAll()}
