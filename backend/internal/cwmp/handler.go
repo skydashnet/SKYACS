@@ -21,7 +21,7 @@ type Handler struct {
 	parameterRepo    *database.ParameterRepository
 	provisioningRepo *database.ProvisioningRepository
 	faultRepo        *database.FaultRepository
-	activeConns      sync.Map // map[remoteAddr string]*Session
+	activeConns      sync.Map
 }
 
 func NewHandler(db *gorm.DB) *Handler {
@@ -55,7 +55,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create session cookie for CWMP session tracking
 	sessionKey := ""
 	if cookie, err := r.Cookie("cwmp_session"); err == nil {
 		sessionKey = cookie.Value
@@ -176,16 +175,12 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 		}
 	}
 
-	// Store session with device ID
 	sessionID := inform.DeviceId.SerialNumber
 	session := h.sessions.GetOrCreate(sessionID, inform.DeviceId.SerialNumber)
 	session.State = StateInformReceived
 	session.DeviceID = deviceID
-	
-	// Store session by remote address for response matching
 	h.activeConns.Store(remoteAddr, session)
 
-	// Check for pending tasks in database
 	if h.taskRepo != nil && deviceID > 0 {
 		tasks, err := h.taskRepo.GetPendingByDeviceID(context.Background(), deviceID)
 		if err != nil {
@@ -201,13 +196,11 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 			return h.buildTaskRequest(task)
 		}
 
-		// Auto-provisioning: Apply provisioning rules jika ada
 		if h.provisioningRepo != nil {
 			rules, err := h.provisioningRepo.ListEnabled(context.Background())
 			if err == nil && len(rules) > 0 {
 				log.Printf("Applying %d provisioning rules to device %s", len(rules), inform.DeviceId.SerialNumber)
 
-				// Build SetParameterValues request
 				spv := &SetParameterValues{ParameterKey: "auto-provisioning"}
 				for _, rule := range rules {
 					spv.ParameterList.Parameters = append(spv.ParameterList.Parameters, ParameterValueStruct{
@@ -223,8 +216,6 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 			}
 		}
 
-		// Auto-fetch parameters penting jika tidak ada pending tasks
-		// Cek EventCode - auto-fetch pada BOOTSTRAP, PERIODIC, atau CONNECTION REQUEST
 		shouldAutoFetch := false
 		for _, event := range inform.Event.Events {
 			if event.EventCode == EventBootstrap || event.EventCode == EventPeriodic || event.EventCode == EventConnectionReq {
@@ -238,7 +229,6 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 			session.State = StateProcessingTasks
 			session.AutoFetchPhase = 1
 
-			// Phase 1: Get WiFi 2.4G info
 			return &GetParameterValues{
 				ParameterNames: []string{"InternetGatewayDevice.LANDevice.1.WLANConfiguration.1."},
 			}, nil
@@ -251,7 +241,6 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp, remoteAddr string) (interface{}, error) {
 	log.Printf("Received GetParameterValuesResponse with %d parameters from %s", len(resp.ParameterList.Parameters), remoteAddr)
 
-	// Get session by remote address instead of looping all sessions
 	val, ok := h.activeConns.Load(remoteAddr)
 	if !ok {
 		log.Printf("No active session found for %s", remoteAddr)
@@ -264,7 +253,6 @@ func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp,
 		return nil, nil
 	}
 
-	// Save parameters to database
 	if h.parameterRepo != nil && session.DeviceID > 0 {
 		params := make([]models.DeviceParameter, 0, len(resp.ParameterList.Parameters))
 		for _, p := range resp.ParameterList.Parameters {
@@ -281,12 +269,9 @@ func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp,
 		}
 	}
 
-	// Handle auto-fetch phases
 	if session.AutoFetchPhase > 0 {
 		return h.continueAutoFetch(session)
 	}
-
-	// Handle manual task - mark as completed
 	if session.CurrentTaskID > 0 && h.taskRepo != nil {
 		result := make(map[string]string)
 		for _, p := range resp.ParameterList.Parameters {
@@ -295,36 +280,33 @@ func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp,
 		h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, result, "")
 	}
 
-	// Check for more pending tasks
 	return h.getNextTask(context.Background(), session)
 }
 
-// continueAutoFetch lanjut ke phase berikutnya dari auto-fetch
 func (h *Handler) continueAutoFetch(session *Session) (interface{}, error) {
 	session.AutoFetchPhase++
 
 	var paramPath string
 	switch session.AutoFetchPhase {
 	case 2:
-		paramPath = "InternetGatewayDevice.LANDevice.1.WLANConfiguration.2." // WiFi 5G
+		paramPath = "InternetGatewayDevice.LANDevice.1.WLANConfiguration.2."
 	case 3:
-		paramPath = "InternetGatewayDevice.WANDevice.1." // WAN
+		paramPath = "InternetGatewayDevice.WANDevice.1."
 	case 4:
-		paramPath = "InternetGatewayDevice.DeviceInfo." // Device Info
+		paramPath = "InternetGatewayDevice.DeviceInfo."
 	case 5:
-		paramPath = "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo." // Modem Credentials (Huawei)
+		paramPath = "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo."
 	case 6:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount." // Modem Credentials (China Mobile)
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount."
 	case 7:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount." // Modem Credentials (China Telecom)
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount."
 	case 8:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_ZTE_COM_TeleComAccount." // Modem Credentials (ZTE)
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_ZTE_COM_TeleComAccount."
 	case 9:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_FH_Account." // Modem Credentials (FiberHome)
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_FH_Account."
 	case 10:
-		paramPath = "Device.Users.User." // Modem Credentials (Generic TR-181)
+		paramPath = "Device.Users.User."
 	default:
-		// Done - reset state
 		session.AutoFetchPhase = 0
 		session.State = StateIdle
 		log.Printf("Auto-fetch completed for device %d", session.DeviceID)
