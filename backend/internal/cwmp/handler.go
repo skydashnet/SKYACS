@@ -201,10 +201,10 @@ func (h *Handler) handleInform(inform *Inform) (interface{}, error) {
 		}
 
 		// Auto-fetch parameters penting jika tidak ada pending tasks
-		// Cek EventCode - hanya auto-fetch pada BOOTSTRAP atau PERIODIC
+		// Cek EventCode - auto-fetch pada BOOTSTRAP, PERIODIC, atau CONNECTION REQUEST
 		shouldAutoFetch := false
 		for _, event := range inform.Event.Events {
-			if event.EventCode == EventBootstrap || event.EventCode == EventPeriodic {
+			if event.EventCode == EventBootstrap || event.EventCode == EventPeriodic || event.EventCode == EventConnectionReq {
 				shouldAutoFetch = true
 				break
 			}
@@ -281,6 +281,18 @@ func (h *Handler) continueAutoFetch(session *Session) (interface{}, error) {
 		paramPath = "InternetGatewayDevice.WANDevice.1." // WAN
 	case 4:
 		paramPath = "InternetGatewayDevice.DeviceInfo." // Device Info
+	case 5:
+		paramPath = "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo." // Modem Credentials (Huawei)
+	case 6:
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount." // Modem Credentials (China Mobile)
+	case 7:
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount." // Modem Credentials (China Telecom)
+	case 8:
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_ZTE_COM_TeleComAccount." // Modem Credentials (ZTE)
+	case 9:
+		paramPath = "InternetGatewayDevice.DeviceInfo.X_FH_Account." // Modem Credentials (FiberHome)
+	case 10:
+		paramPath = "Device.Users.User." // Modem Credentials (Generic TR-181)
 	default:
 		// Done - reset state
 		session.AutoFetchPhase = 0

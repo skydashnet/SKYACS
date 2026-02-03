@@ -1,7 +1,7 @@
 import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For, createEffect, onMount, onCleanup } from 'solid-js';
 import { useParams, A, useNavigate } from '@solidjs/router';
-import { ArrowLeft, RefreshCw, RotateCcw, Trash2, Server, Network, Radio, Users, Zap, Edit, Save, X, HeartPulse, Send } from 'lucide-solid';
+import { ArrowLeft, RefreshCw, RotateCcw, Trash2, Server, Network, Radio, Users, Zap, Edit, Save, X, HeartPulse, Send, Key } from 'lucide-solid';
 import { api } from '../lib/api';
 
 const DeviceDetail: Component = () => {
@@ -22,6 +22,8 @@ const DeviceDetail: Component = () => {
   const [pppEdits, setPPPEdits] = createSignal<Record<string, string>>({});
   const [autoRefresh] = createSignal(true);
   const [selectedParam, setSelectedParam] = createSignal<{ name: string; value: string } | null>(null);
+  const [editingModemCreds, setEditingModemCreds] = createSignal(false);
+  const [modemCredsEdits, setModemCredsEdits] = createSignal<Record<string, string>>({});
 
   const autoFetchParameters = async () => {
     if (!device() || parameters()?.length) return;
@@ -213,6 +215,138 @@ const DeviceDetail: Component = () => {
       showMessage('success', `PPPoE credentials untuk WAN${index} berhasil diubah.`);
       refetchTasks();
       handleCancelEditPPP();
+    } catch (err) {
+      showMessage('error', 'Gagal: ' + (err as Error).message);
+    }
+    setActionLoading(null);
+  };
+
+  // Modem Credentials Handlers
+  const getModemCredentials = () => {
+    const params = parameters() || [];
+    const findParam = (patterns: string[]) => {
+      for (const p of params) {
+        for (const pattern of patterns) {
+          if (p.name.includes(pattern)) return p.value;
+        }
+      }
+      return '-';
+    };
+
+    return {
+      // Admin/Superadmin - Huawei biasanya di index 2 (telecomadmin)
+      adminUser: findParam([
+        'X_HW_WebUserInfo.2.UserName',
+        'X_CMCC_TeleComAccount.Username',
+        'X_CT-COM_TeleComAccount.Username',
+        'X_ZTE_COM_TeleComAccount.Username',
+        'X_FH_WebUserInfo.UserName',
+        'Users.User.1.Username',
+      ]),
+      adminPass: findParam([
+        'X_HW_WebUserInfo.2.Password',
+        'X_CMCC_TeleComAccount.Password',
+        'X_CT-COM_TeleComAccount.Password',
+        'X_ZTE_COM_TeleComAccount.Password',
+        'X_FH_WebUserInfo.Password',
+        'Users.User.1.Password',
+      ]),
+      // User biasa - Huawei biasanya di index 1 (root)
+      userUser: findParam([
+        'X_HW_WebUserInfo.1.UserName',
+        'Users.User.2.Username',
+      ]),
+      userPass: findParam([
+        'X_HW_WebUserInfo.1.Password',
+        'Users.User.2.Password',
+      ]),
+    };
+  };
+
+  const handleEditModemCreds = () => {
+    const creds = getModemCredentials();
+    setModemCredsEdits({
+      adminUser: creds.adminUser !== '-' ? creds.adminUser : '',
+      adminPass: '',
+      userUser: creds.userUser !== '-' ? creds.userUser : '',
+      userPass: '',
+    });
+    setEditingModemCreds(true);
+  };
+
+  const handleCancelModemCreds = () => {
+    setEditingModemCreds(false);
+    setModemCredsEdits({});
+  };
+
+  const handleSaveModemCreds = async () => {
+    const edits = modemCredsEdits();
+    setActionLoading('modem-creds');
+    try {
+      const params: Record<string, string> = {};
+      const allParams = parameters() || [];
+      
+      // Detect vendor dari parameter yang ada
+      const detectVendor = () => {
+        for (const p of allParams) {
+          if (p.name.includes('X_HW_WebUserInfo')) return 'huawei';
+          if (p.name.includes('X_CMCC_TeleComAccount')) return 'cmcc';
+          if (p.name.includes('X_CT-COM_TeleComAccount')) return 'ctcom';
+          if (p.name.includes('X_ZTE_COM_TeleComAccount')) return 'zte';
+          if (p.name.includes('X_FH_WebUserInfo')) return 'fiberhome';
+          if (p.name.includes('Device.Users.User')) return 'tr181';
+        }
+        return 'huawei'; // Default to Huawei
+      };
+
+      const vendor = detectVendor();
+      let adminUserPath = '', adminPassPath = '', userUserPath = '', userPassPath = '';
+
+      switch (vendor) {
+        case 'huawei':
+          adminUserPath = 'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.UserName';
+          adminPassPath = 'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.Password';
+          userUserPath = 'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.UserName';
+          userPassPath = 'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password';
+          break;
+        case 'cmcc':
+          adminUserPath = 'InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Username';
+          adminPassPath = 'InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Password';
+          break;
+        case 'ctcom':
+          adminUserPath = 'InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Username';
+          adminPassPath = 'InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Password';
+          break;
+        case 'zte':
+          adminUserPath = 'InternetGatewayDevice.DeviceInfo.X_ZTE_COM_TeleComAccount.Username';
+          adminPassPath = 'InternetGatewayDevice.DeviceInfo.X_ZTE_COM_TeleComAccount.Password';
+          break;
+        case 'fiberhome':
+          adminUserPath = 'InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.UserName';
+          adminPassPath = 'InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.Password';
+          break;
+        case 'tr181':
+          adminUserPath = 'Device.Users.User.1.Username';
+          adminPassPath = 'Device.Users.User.1.Password';
+          userUserPath = 'Device.Users.User.2.Username';
+          userPassPath = 'Device.Users.User.2.Password';
+          break;
+      }
+
+      if (edits.adminUser && adminUserPath) params[adminUserPath] = edits.adminUser;
+      if (edits.adminPass && adminPassPath) params[adminPassPath] = edits.adminPass;
+      if (edits.userUser && userUserPath) params[userUserPath] = edits.userUser;
+      if (edits.userPass && userPassPath) params[userPassPath] = edits.userPass;
+
+      if (Object.keys(params).length === 0) {
+        handleCancelModemCreds();
+        return;
+      }
+
+      await api.setParameterValues(serial(), params);
+      showMessage('success', 'Modem credentials berhasil diubah.');
+      refetchTasks();
+      handleCancelModemCreds();
     } catch (err) {
       showMessage('error', 'Gagal: ' + (err as Error).message);
     }
@@ -686,6 +820,107 @@ const DeviceDetail: Component = () => {
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Row 1.5: Modem Credentials */}
+            <div class="card p-5">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-sm font-medium text-secondary flex items-center gap-2">
+                  <Key size={14} />
+                  Modem Credentials
+                </h2>
+                <Show when={!editingModemCreds()}>
+                  <button
+                    onClick={handleEditModemCreds}
+                    disabled={actionLoading() !== null}
+                    class="p-1.5 rounded hover:bg-elevated text-teal-500"
+                    title="Edit Credentials"
+                  >
+                    <Edit size={14} />
+                  </button>
+                </Show>
+              </div>
+              <Show when={editingModemCreds()} fallback={
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <div class="text-muted text-xs mb-1">Admin Username</div>
+                    <div class="text-primary font-mono">{getModemCredentials().adminUser}</div>
+                  </div>
+                  <div>
+                    <div class="text-muted text-xs mb-1">Admin Password</div>
+                    <div class="text-primary font-mono">{getModemCredentials().adminPass}</div>
+                  </div>
+                  <div>
+                    <div class="text-muted text-xs mb-1">User Username</div>
+                    <div class="text-primary font-mono">{getModemCredentials().userUser}</div>
+                  </div>
+                  <div>
+                    <div class="text-muted text-xs mb-1">User Password</div>
+                    <div class="text-primary font-mono">{getModemCredentials().userPass}</div>
+                  </div>
+                </div>
+              }>
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <label class="text-muted text-xs mb-1 block">Admin Username</label>
+                    <input
+                      type="text"
+                      value={modemCredsEdits().adminUser || ''}
+                      onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), adminUser: e.currentTarget.value })}
+                      class="input w-full py-1.5 text-sm font-mono"
+                      placeholder="admin"
+                    />
+                  </div>
+                  <div>
+                    <label class="text-muted text-xs mb-1 block">Admin Password</label>
+                    <input
+                      type="text"
+                      value={modemCredsEdits().adminPass || ''}
+                      onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), adminPass: e.currentTarget.value })}
+                      class="input w-full py-1.5 text-sm font-mono"
+                      placeholder="New password"
+                    />
+                  </div>
+                  <div>
+                    <label class="text-muted text-xs mb-1 block">User Username</label>
+                    <input
+                      type="text"
+                      value={modemCredsEdits().userUser || ''}
+                      onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), userUser: e.currentTarget.value })}
+                      class="input w-full py-1.5 text-sm font-mono"
+                      placeholder="user"
+                    />
+                  </div>
+                  <div>
+                    <label class="text-muted text-xs mb-1 block">User Password</label>
+                    <input
+                      type="text"
+                      value={modemCredsEdits().userPass || ''}
+                      onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), userPass: e.currentTarget.value })}
+                      class="input w-full py-1.5 text-sm font-mono"
+                      placeholder="New password"
+                    />
+                  </div>
+                </div>
+                <div class="flex gap-2 mt-4 justify-end">
+                  <button
+                    onClick={handleCancelModemCreds}
+                    disabled={actionLoading() !== null}
+                    class="btn btn-secondary text-sm py-1.5"
+                  >
+                    <X size={14} />
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleSaveModemCreds}
+                    disabled={actionLoading() === 'modem-creds'}
+                    class="btn btn-primary text-sm py-1.5"
+                  >
+                    <Save size={14} />
+                    {actionLoading() === 'modem-creds' ? 'Menyimpan...' : 'Simpan'}
+                  </button>
+                </div>
+              </Show>
             </div>
 
             {/* Row 2: WAN Information */}
