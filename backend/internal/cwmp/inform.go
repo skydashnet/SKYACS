@@ -42,8 +42,15 @@ func EkstrakParameterPenting(params []ParameterValueStruct) map[string]string {
 		"InternetGatewayDevice.DeviceInfo.HardwareVersion":          "HardwareVersion",
 		"InternetGatewayDevice.DeviceInfo.UpTime":                   "UpTime",
 		"InternetGatewayDevice.ManagementServer.ConnectionRequestURL": "ConnectionRequestURL",
+		// WANConnectionDevice.1
 		"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress": "ExternalIPAddress",
 		"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress": "ExternalIPAddress",
+		// WANConnectionDevice.2 (GM220-S, dll)
+		"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANIPConnection.1.ExternalIPAddress": "ExternalIPAddress",
+		"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress": "ExternalIPAddress",
+		// WANConnectionDevice.3
+		"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANIPConnection.1.ExternalIPAddress": "ExternalIPAddress",
+		"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.ExternalIPAddress": "ExternalIPAddress",
 		// Device:2 data model
 		"Device.DeviceInfo.SoftwareVersion": "SoftwareVersion",
 		"Device.DeviceInfo.HardwareVersion": "HardwareVersion",
