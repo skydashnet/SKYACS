@@ -401,7 +401,7 @@ const DeviceDetail: Component = () => {
   };
 
   const getTemperature = () => {
-    const val = getParamValue(['Temperature', 'Temp', 'OpticalTemperature']);
+    const val = getParamValue(['TransceiverTemperature', 'TemperatureStatus.TemperatureSensor.1.Value', 'OpticalTemperature', 'Temperature']);
     if (val === '-') return '-';
     const num = parseFloat(val);
     if (isNaN(num)) return val;
@@ -461,9 +461,11 @@ const DeviceDetail: Component = () => {
     }> = [];
 
     for (let i = 1; i <= 8; i++) {
-      const wanPPP = params.filter(p => p.name.includes(`WANPPPConnection.${i}.`) || p.name.includes(`WANConnectionDevice.${i}.`));
+      const wanPPP = params.filter(p => p.name.includes(`WANPPPConnection.${i}.`));
       const wanIP = params.filter(p => p.name.includes(`WANIPConnection.${i}.`));
-      const wanParams = [...wanPPP, ...wanIP];
+      const wanDevice = params.filter(p => p.name.includes(`WANConnectionDevice.${i}.`));
+      
+      const wanParams = wanPPP.length > 0 ? [...wanPPP, ...wanDevice] : (wanIP.length > 0 ? [...wanIP, ...wanDevice] : []);
       
       if (wanParams.length === 0) continue;
 
@@ -510,6 +512,10 @@ const DeviceDetail: Component = () => {
           const val = getName(s);
           if (val && val !== '-') return val;
         }
+        for (const s of suffixes) {
+          const found = params.find(p => p.name.includes(s))?.value;
+          if (found && found !== '-') return found;
+        }
         return '-';
       };
 
@@ -517,7 +523,7 @@ const DeviceDetail: Component = () => {
         index: i,
         name: getName('Name') !== '-' ? getName('Name') : `WAN${i}`,
         status: connStatus,
-        vlan: getFirstValid('X_HW_VLAN', 'VLANID', 'VLANIDMark', 'X_CT_VLAN'),
+        vlan: getFirstValid('X_HW_VLAN', 'VLANID', 'VLANIDMark', 'X_CT_VLAN', 'WANEponLinkConfig.VLANIDMark'),
         username: getName('Username'),
         password: getName('Password') || '******',
         ipAddress: getFirstValid('ExternalIPAddress', 'IPAddress'),
@@ -768,7 +774,7 @@ const DeviceDetail: Component = () => {
                   <div><span class="text-muted">Model:</span> <span class="text-primary">{d().model_name || getParamValue(['ModelName', 'X_HW_ModelName', 'DeviceInfo.ModelName']) || '-'}</span></div>
                   <div><span class="text-muted">HW Version:</span> <span class="text-primary">{d().hardware_version || '-'}</span></div>
                   <div><span class="text-muted">SW Version:</span> <span class="text-primary">{d().software_version || '-'}</span></div>
-                  <div><span class="text-muted">IP Address:</span> <span class="text-primary font-mono">{d().ip_address || '-'}</span></div>
+                  <div><span class="text-muted">IP Address:</span> <span class="text-primary font-mono">{d().ip_address || getParamValue(['ExternalIPAddress', 'IPAddress']) || '-'}</span></div>
                 </div>
               </div>
 
@@ -1048,9 +1054,10 @@ const DeviceDetail: Component = () => {
                 <Radio size={14} />
                 WiFi Configuration
               </h2>
-              <Show when={getWlanConfigs().length > 0} fallback={
-                <p class="text-muted text-sm">No WiFi configuration data. Click Summon to fetch.</p>
-              }>
+              <Show when={!parameters.loading} fallback={<p class="text-muted text-sm">Loading...</p>}>
+                <Show when={getWlanConfigs().length > 0} fallback={
+                  <p class="text-muted text-sm">No WiFi configuration data. Click Summon to fetch.</p>
+                }>
                 <div class="overflow-x-auto">
                   <table class="w-full text-xs">
                     <thead class="sticky top-0 bg-base z-10">
@@ -1144,6 +1151,7 @@ const DeviceDetail: Component = () => {
                     </tbody>
                   </table>
                 </div>
+                </Show>
               </Show>
             </div>
 
@@ -1151,11 +1159,12 @@ const DeviceDetail: Component = () => {
             <div class="card p-5">
               <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
                 <Users size={14} />
-                Connected Hosts ({getHosts().length})
+                Connected Hosts (<Show when={!parameters.loading} fallback="...">{getHosts().length}</Show>)
               </h2>
-              <Show when={getHosts().length > 0} fallback={
-                <p class="text-muted text-sm">No connected hosts data. Click Summon to fetch.</p>
-              }>
+              <Show when={!parameters.loading} fallback={<p class="text-muted text-sm">Loading...</p>}>
+                <Show when={getHosts().length > 0} fallback={
+                  <p class="text-muted text-sm">No connected hosts data. Click Summon to fetch.</p>
+                }>
                 <div class="overflow-x-auto">
                   <table class="w-full text-sm">
                     <thead class="sticky top-0 bg-base z-10">
@@ -1198,6 +1207,7 @@ const DeviceDetail: Component = () => {
                     </tbody>
                   </table>
                 </div>
+                </Show>
               </Show>
             </div>
 
