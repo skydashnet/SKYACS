@@ -56,7 +56,6 @@ const DeviceDetail: Component = () => {
     onCleanup(() => clearInterval(interval));
   });
 
-  // Dynamic page title
   createEffect(() => {
     const s = serial();
     document.title = s ? `${s} - miniACS` : 'miniACS';
@@ -112,7 +111,6 @@ const DeviceDetail: Component = () => {
       const result = await api.connectionRequest(serial());
       showMessage('success', result.message);
       
-      // Single task with safe paths
       await api.getParameterValues(serial(), [
         'InternetGatewayDevice.DeviceInfo.',
         'InternetGatewayDevice.LANDevice.1.Hosts.',
@@ -181,7 +179,6 @@ const DeviceDetail: Component = () => {
     setActionLoading(null);
   };
 
-  // PPPoE Edit Handlers
   const handleEditPPP = (index: number, username: string, password: string) => {
     setEditingPPP(index);
     setPPPEdits({ username, password: password === '******' ? '' : password });
@@ -221,7 +218,6 @@ const DeviceDetail: Component = () => {
     setActionLoading(null);
   };
 
-  // Modem Credentials Handlers
   const getModemCredentials = () => {
     const params = parameters() || [];
     const findParam = (patterns: string[]) => {
@@ -234,7 +230,6 @@ const DeviceDetail: Component = () => {
     };
 
     return {
-      // Admin/Superadmin - Huawei biasanya di index 2 (telecomadmin)
       adminUser: findParam([
         'X_HW_WebUserInfo.2.UserName',
         'X_CMCC_TeleComAccount.Username',
@@ -251,7 +246,6 @@ const DeviceDetail: Component = () => {
         'X_FH_WebUserInfo.Password',
         'Users.User.1.Password',
       ]),
-      // User biasa - Huawei biasanya di index 1 (root)
       userUser: findParam([
         'X_HW_WebUserInfo.1.UserName',
         'Users.User.2.Username',
@@ -286,7 +280,6 @@ const DeviceDetail: Component = () => {
       const params: Record<string, string> = {};
       const allParams = parameters() || [];
       
-      // Detect vendor dari parameter yang ada
       const detectVendor = () => {
         for (const p of allParams) {
           if (p.name.includes('X_HW_WebUserInfo')) return 'huawei';
@@ -296,7 +289,7 @@ const DeviceDetail: Component = () => {
           if (p.name.includes('X_FH_WebUserInfo')) return 'fiberhome';
           if (p.name.includes('Device.Users.User')) return 'tr181';
         }
-        return 'huawei'; // Default to Huawei
+        return 'huawei';
       };
 
       const vendor = detectVendor();
@@ -410,7 +403,6 @@ const DeviceDetail: Component = () => {
     return num.toFixed(1);
   };
 
-  // Color-coded helpers
   const getTempColor = () => {
     const temp = parseFloat(getTemperature());
     if (isNaN(temp)) return 'text-muted';
@@ -431,9 +423,9 @@ const DeviceDetail: Component = () => {
     const uptime = getDeviceUptime();
     if (!uptime) return 'text-muted';
     const secs = parseInt(uptime);
-    if (secs > 86400 * 7) return 'text-emerald-400'; // > 7 days
-    if (secs > 86400) return 'text-teal-400'; // > 1 day
-    return 'text-amber-400'; // < 1 day
+    if (secs > 86400 * 7) return 'text-emerald-400';
+    if (secs > 86400) return 'text-teal-400';
+    return 'text-amber-400';
   };
 
   const getWanConfigs = () => {
@@ -586,39 +578,33 @@ const DeviceDetail: Component = () => {
     const params = parameters() || [];
     const hosts: Array<{ index: number; hostname: string; ip: string; mac: string; interface: string; rssi?: string; uptime?: string }> = [];
     
-    // Parse dari Hosts.Host (LAN hosts)
     const hostIndices = [...new Set(params.filter(p => p.name.includes('Hosts.Host.')).map(p => {
       const match = p.name.match(/Host\.(\d+)\./);
       return match ? parseInt(match[1]) : 0;
     }))].filter(i => i > 0);
     
-    // Helper function to get WiFi band from SSID index
     const getWifiBand = (ssidIdx: number): string => {
       const wlanPrefix = `InternetGatewayDevice.LANDevice.1.WLANConfiguration.${ssidIdx}.`;
       const channel = params.find(p => p.name === wlanPrefix + 'Channel')?.value;
       const standard = params.find(p => p.name === wlanPrefix + 'Standard')?.value;
       const freq = params.find(p => p.name === wlanPrefix + 'X_HW_FrequencyBand')?.value;
       
-      // Check frequency band parameter directly
       if (freq) {
         if (freq.includes('5') || freq.includes('5GHz')) return '5GHz';
         if (freq.includes('2.4') || freq.includes('2.4GHz')) return '2.4GHz';
       }
       
-      // Check by channel number
       if (channel) {
         const ch = parseInt(channel);
         if (ch >= 36 && ch <= 177) return '5GHz';
         if (ch >= 1 && ch <= 14) return '2.4GHz';
       }
       
-      // Check by standard
       if (standard) {
         if (standard.includes('ac') || standard.includes('ax')) return '5GHz';
         if (standard.includes('n') || standard.includes('g') || standard.includes('b')) return '2.4GHz';
       }
       
-      // Default based on SSID index (common pattern: 1=2.4GHz, 5+=5GHz)
       return ssidIdx >= 5 ? '5GHz' : '2.4GHz';
     };
 
@@ -657,7 +643,6 @@ const DeviceDetail: Component = () => {
       });
     });
 
-    // Parse dari WLAN AssociatedDevice (WiFi clients)
     for (let ssidIdx = 1; ssidIdx <= 8; ssidIdx++) {
       const assocIndices = [...new Set(params.filter(p => 
         p.name.includes(`WLANConfiguration.${ssidIdx}.AssociatedDevice.`)
@@ -672,7 +657,6 @@ const DeviceDetail: Component = () => {
         
         const mac = getVal('AssociatedDeviceMACAddress');
         if (mac && mac !== '-') {
-          // Cek apakah sudah ada di hosts (dari Hosts.Host)
           const exists = hosts.some(h => h.mac.toLowerCase() === mac.toLowerCase());
           if (!exists) {
             hosts.push({
@@ -1054,7 +1038,7 @@ const DeviceDetail: Component = () => {
                 <Radio size={14} />
                 WiFi Configuration
               </h2>
-              <Show when={!parameters.loading} fallback={<p class="text-muted text-sm">Loading...</p>}>
+              <Show when={!parameters.loading || (parameters()?.length ?? 0) > 0} fallback={<p class="text-muted text-sm">Loading...</p>}>
                 <Show when={getWlanConfigs().length > 0} fallback={
                   <p class="text-muted text-sm">No WiFi configuration data. Click Summon to fetch.</p>
                 }>
@@ -1159,9 +1143,9 @@ const DeviceDetail: Component = () => {
             <div class="card p-5">
               <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
                 <Users size={14} />
-                Connected Hosts (<Show when={!parameters.loading} fallback="...">{getHosts().length}</Show>)
+                Connected Hosts ({getHosts().length})
               </h2>
-              <Show when={!parameters.loading} fallback={<p class="text-muted text-sm">Loading...</p>}>
+              <Show when={!parameters.loading || (parameters()?.length ?? 0) > 0} fallback={<p class="text-muted text-sm">Loading...</p>}>
                 <Show when={getHosts().length > 0} fallback={
                   <p class="text-muted text-sm">No connected hosts data. Click Summon to fetch.</p>
                 }>
