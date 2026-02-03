@@ -1,7 +1,7 @@
 import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For, createMemo, createEffect, onMount } from 'solid-js';
-import { A } from '@solidjs/router';
-import { RefreshCw, ChevronLeft, ChevronRight, Router as RouterIcon, Settings2, X, Eye, EyeOff, GripVertical, Search, Send } from 'lucide-solid';
+import { useNavigate } from '@solidjs/router';
+import { RefreshCw, ChevronLeft, ChevronRight, Router as RouterIcon, Settings2, X, Check, GripVertical, Search, Send, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-solid';
 import { api } from '../lib/api';
 
 interface ColumnConfig {
@@ -36,10 +36,11 @@ const TableSkeleton: Component<{ cols: number }> = (props) => (
 const Devices: Component = () => {
   const [page, setPage] = createSignal(0);
   const [showColumnSettings, setShowColumnSettings] = createSignal(false);
-  const [activeFilter, setActiveFilter] = createSignal<string | null>(null);
-  const [filters, setFilters] = createSignal<Record<string, string>>({});
+  const [searchQuery, setSearchQuery] = createSignal('');
   const [columns, setColumns] = createSignal<ColumnConfig[]>([]);
   const [summoningAll, setSummoningAll] = createSignal(false);
+  const [sortBy, setSortBy] = createSignal<{ column: string; direction: 'asc' | 'desc' } | null>(null);
+  const navigate = useNavigate();
   const limit = 20;
 
   onMount(() => {
@@ -68,8 +69,8 @@ const Devices: Component = () => {
   });
 
   const [deviceList, { refetch }] = createResource(
-    () => ({ page: page(), filters: filters() }),
-    (params) => api.getDevices(limit, params.page * limit)
+    () => page(),
+    (p) => api.getDevices(limit, p * limit)
   );
 
   const totalPages = () => Math.ceil((deviceList()?.total ?? 0) / limit);
@@ -159,9 +160,9 @@ const Devices: Component = () => {
     switch (columnId) {
       case 'serial_number':
         return (
-          <A href={`/device/${device.serial_number}`} class="text-teal-500 hover:text-teal-400 font-mono text-sm transition-fast">
+          <span class="text-teal-500 font-mono text-sm">
             {device.serial_number}
-          </A>
+          </span>
         );
       case 'manufacturer':
         return <span class="text-secondary text-sm">{device.manufacturer || '-'}</span>;
@@ -178,7 +179,12 @@ const Devices: Component = () => {
         return <span class="text-secondary text-sm font-mono">{getPppUsername(device)}</span>;
       case 'status':
         return (
-          <span class={`badge ${device.online ? 'badge-success' : 'badge-error'}`}>
+          <span class={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium ${
+            device.online 
+              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' 
+              : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+          }`}>
+            <span class={`w-1.5 h-1.5 rounded-full ${device.online ? 'bg-emerald-400' : 'bg-rose-400'}`} />
             {device.online ? 'Online' : 'Offline'}
           </span>
         );
@@ -191,47 +197,103 @@ const Devices: Component = () => {
 
   const filteredDevices = createMemo(() => {
     const devices = deviceList()?.devices || [];
-    const f = filters();
-    if (Object.keys(f).length === 0) return devices;
+    const query = searchQuery().toLowerCase().trim();
+    if (!query) return devices;
+    
     return devices.filter(d => {
-      for (const [key, val] of Object.entries(f)) {
-        if (!val) continue;
-        const search = val.toLowerCase();
-        switch (key) {
-          case 'serial_number':
-            if (!d.serial_number?.toLowerCase().includes(search)) return false;
-            break;
-          case 'manufacturer':
-            if (!d.manufacturer?.toLowerCase().includes(search)) return false;
-            break;
-          case 'model':
-            if (!(d.model_name?.toLowerCase().includes(search) || d.product_class?.toLowerCase().includes(search))) return false;
-            break;
-          case 'ip_address':
-            if (!d.ip_address?.toLowerCase().includes(search)) return false;
-            break;
-          case 'status':
-            const online = search === 'online' || search === 'on' || search === '1';
-            const offline = search === 'offline' || search === 'off' || search === '0';
-            if (online && !d.online) return false;
-            if (offline && d.online) return false;
-            break;
-        }
-      }
-      return true;
+      return (
+        d.serial_number?.toLowerCase().includes(query) ||
+        d.manufacturer?.toLowerCase().includes(query) ||
+        d.model_name?.toLowerCase().includes(query) ||
+        d.product_class?.toLowerCase().includes(query) ||
+        d.ip_address?.toLowerCase().includes(query)
+      );
     });
   });
+
+  const sortedDevices = createMemo(() => {
+    const devices = [...filteredDevices()];
+    const sort = sortBy();
+    if (!sort) return devices;
+    
+    return devices.sort((a, b) => {
+      let aVal: any, bVal: any;
+      
+      switch (sort.column) {
+        case 'serial_number':
+          aVal = a.serial_number || '';
+          bVal = b.serial_number || '';
+          break;
+        case 'manufacturer':
+          aVal = a.manufacturer || '';
+          bVal = b.manufacturer || '';
+          break;
+        case 'model':
+          aVal = a.model_name || a.product_class || '';
+          bVal = b.model_name || b.product_class || '';
+          break;
+        case 'ip_address':
+          aVal = a.ip_address || '';
+          bVal = b.ip_address || '';
+          break;
+        case 'status':
+          aVal = a.online ? 1 : 0;
+          bVal = b.online ? 1 : 0;
+          break;
+        case 'last_inform':
+          aVal = a.last_inform ? new Date(a.last_inform).getTime() : 0;
+          bVal = b.last_inform ? new Date(b.last_inform).getTime() : 0;
+          break;
+        default:
+          return 0;
+      }
+      
+      if (typeof aVal === 'string') {
+        const comparison = aVal.localeCompare(bVal);
+        return sort.direction === 'asc' ? comparison : -comparison;
+      }
+      
+      return sort.direction === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  });
+
+  const handleSort = (columnId: string) => {
+    const current = sortBy();
+    if (current?.column === columnId) {
+      if (current.direction === 'asc') {
+        setSortBy({ column: columnId, direction: 'desc' });
+      } else {
+        setSortBy(null);
+      }
+    } else {
+      setSortBy({ column: columnId, direction: 'asc' });
+    }
+  };
 
   return (
     <div class="space-y-5">
       <div class="flex items-center justify-between gap-3 flex-wrap">
         <h1 class="text-xl font-semibold text-primary">List All Devices</h1>
         <div class="flex gap-2">
-          <Show when={Object.values(filters()).some(v => v)}>
-            <button onClick={() => setFilters({})} class="btn btn-secondary text-xs py-1 px-2">
-              Clear Filters
-            </button>
-          </Show>
+          <div class="relative">
+            <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery()}
+              onInput={(e) => setSearchQuery(e.currentTarget.value)}
+              placeholder="Search devices..."
+              class="input w-48 text-sm"
+              style={{ "padding-left": "2.5rem", "padding-right": "2rem" }}
+            />
+            <Show when={searchQuery()}>
+              <button
+                onClick={() => setSearchQuery('')}
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary"
+              >
+                <X size={12} />
+              </button>
+            </Show>
+          </div>
           <button onClick={() => setShowColumnSettings(!showColumnSettings())}
             class={`btn btn-secondary ${showColumnSettings() ? 'bg-teal-500/20 text-teal-400' : ''}`}
           >
@@ -283,14 +345,14 @@ const Devices: Component = () => {
                   onDragStart={(e) => handleDragStart(e, col.id)}
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, col.id)}
-                  class={`flex items-center gap-2 px-3 py-2 rounded-lg bg-elevated cursor-grab active:cursor-grabbing transition-all ${draggedCol() === col.id ? 'opacity-50 scale-95' : 'hover:bg-elevated/80'}`}
+                  class={`flex items-center gap-2 px-3 py-1.5 bg-elevated cursor-grab active:cursor-grabbing transition-all ${draggedCol() === col.id ? 'opacity-50 scale-95' : 'hover:bg-elevated/80'}`}
                 >
                   <GripVertical size={12} class="text-muted" />
                   <button
                     onClick={() => toggleColumn(col.id)}
-                    class={col.visible ? 'text-teal-500' : 'text-muted'}
+                    class={`w-4 h-4 border flex items-center justify-center transition-colors ${col.visible ? 'bg-teal-500 border-teal-500' : 'border-muted bg-transparent'}`}
                   >
-                    {col.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                    {col.visible && <Check size={10} class="text-white" />}
                   </button>
                   <span class={`text-sm ${col.visible ? 'text-primary' : 'text-muted'}`}>
                     {col.label}
@@ -309,58 +371,33 @@ const Devices: Component = () => {
               <tr class="border-b border-subtle">
                 <For each={visibleColumns()}>
                   {(col) => {
-                    const isFilterable = ['serial_number', 'manufacturer', 'model', 'ip_address', 'status', 'ppp_username'].includes(col.id);
-                    const isActive = activeFilter() === col.id;
-                    const hasFilter = !!filters()[col.id];
+                    const isSortable = ['serial_number', 'manufacturer', 'model', 'ip_address', 'status', 'last_inform'].includes(col.id);
+                    const currentSort = sortBy();
+                    const isSorted = currentSort?.column === col.id;
                     
                     return (
                       <th class="px-4 py-2 text-left whitespace-nowrap">
-                        <Show when={isActive} fallback={
+                        <div class="flex items-center gap-2">
                           <button
-                            onClick={() => isFilterable && setActiveFilter(col.id)}
-                            class={`flex items-center gap-1 text-xs font-medium uppercase tracking-wide transition-colors ${
-                              hasFilter ? 'text-teal-400' : 'text-muted'
-                            } ${isFilterable ? 'hover:text-primary cursor-pointer' : 'cursor-default'}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (isSortable) handleSort(col.id);
+                            }}
+                            class={`flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
+                              isSorted ? 'text-teal-400' : 'text-muted'
+                            } ${isSortable ? 'hover:text-primary cursor-pointer' : 'cursor-default'}`}
                           >
                             {col.label}
-                            <Show when={isFilterable}>
-                              <Search size={10} class={hasFilter ? 'text-teal-400' : 'opacity-50'} />
+                            <Show when={isSortable}>
+                              {isSorted ? (
+                                currentSort?.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+                              ) : (
+                                <ArrowUpDown size={10} class="opacity-50" />
+                              )}
                             </Show>
                           </button>
-                        }>
-                          <div class="flex items-center gap-1">
-                            <Show when={col.id === 'status'} fallback={
-                              <input
-                                type="text"
-                                value={filters()[col.id] || ''}
-                                onInput={(e) => setFilters(f => ({ ...f, [col.id]: e.currentTarget.value }))}
-                                onKeyDown={(e) => e.key === 'Escape' && setActiveFilter(null)}
-                                onBlur={() => setTimeout(() => setActiveFilter(null), 150)}
-                                class="input input-sm w-24 text-xs"
-                                placeholder={`Filter...`}
-                                autofocus
-                              />
-                            }>
-                              <select
-                                value={filters().status || ''}
-                                onChange={(e) => {
-                                  setFilters(f => ({ ...f, status: e.currentTarget.value }));
-                                  setActiveFilter(null);
-                                }}
-                                onBlur={() => setTimeout(() => setActiveFilter(null), 150)}
-                                class="input input-sm w-20 text-xs"
-                                autofocus
-                              >
-                                <option value="">All</option>
-                                <option value="online">Online</option>
-                                <option value="offline">Offline</option>
-                              </select>
-                            </Show>
-                            <button onClick={() => setActiveFilter(null)} class="text-muted hover:text-primary">
-                              <X size={12} />
-                            </button>
-                          </div>
-                        </Show>
+                        </div>
                       </th>
                     );
                   }}
@@ -373,7 +410,7 @@ const Devices: Component = () => {
                 fallback={<><TableSkeleton cols={visibleColumns().length} /><TableSkeleton cols={visibleColumns().length} /><TableSkeleton cols={visibleColumns().length} /></>}
               >
                 <Show
-                  when={filteredDevices().length}
+                  when={sortedDevices().length}
                   fallback={
                     <tr>
                       <td colspan={visibleColumns().length} class="px-4 py-12 text-center">
@@ -384,9 +421,12 @@ const Devices: Component = () => {
                     </tr>
                   }
                 >
-                  <For each={filteredDevices()}>
-                    {(device) => (
-                      <tr class="border-t border-subtle hover:bg-elevated transition-fast">
+                  <For each={sortedDevices()}>
+                    {(device, idx) => (
+                      <tr 
+                        class={`border-t border-subtle hover:bg-elevated transition-fast cursor-pointer ${idx() % 2 === 1 ? 'bg-base/50' : ''}`}
+                        onClick={() => navigate(`/device/${device.serial_number}`)}
+                      >
                         <For each={visibleColumns()}>
                           {(col) => (
                             <td class="px-4 py-3 whitespace-nowrap">
