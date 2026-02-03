@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	
+	"sync"
 	"time"
 
 	"github.com/skydashnet/miniacs/internal/database"
@@ -21,6 +21,7 @@ type Handler struct {
 	parameterRepo    *database.ParameterRepository
 	provisioningRepo *database.ProvisioningRepository
 	faultRepo        *database.FaultRepository
+	activeConns      sync.Map // map[remoteAddr string]*Session
 }
 
 func NewHandler(db *gorm.DB) *Handler {
@@ -54,6 +55,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get or create session cookie for CWMP session tracking
+	sessionKey := ""
+	if cookie, err := r.Cookie("cwmp_session"); err == nil {
+		sessionKey = cookie.Value
+	}
+	if sessionKey == "" {
+		sessionKey = fmt.Sprintf("sess_%d_%d", time.Now().UnixNano(), time.Now().UnixMicro()%10000)
+		http.SetCookie(w, &http.Cookie{
+			Name:     "cwmp_session",
+			Value:    sessionKey,
+			Path:     "/",
+			HttpOnly: true,
+		})
+	}
+
 	envelope, err := ParseSOAPEnvelope(r.Body)
 	if err != nil {
 		log.Printf("Error parsing SOAP: %v", err)
@@ -67,7 +83,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.routeMessage(envelope)
+	response, err := h.routeMessage(envelope, sessionKey)
 	if err != nil {
 		log.Printf("Error processing message: %v", err)
 		h.sendFault(w, err)
@@ -90,34 +106,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(responseBytes)
 }
 
-func (h *Handler) routeMessage(envelope *SOAPEnvelope) (interface{}, error) {
+func (h *Handler) routeMessage(envelope *SOAPEnvelope, remoteAddr string) (interface{}, error) {
 	msgType := DeteksiTipeMessage(&envelope.Body)
-	log.Printf("Received CWMP message: %s", msgType)
+	log.Printf("Received CWMP message: %s from %s", msgType, remoteAddr)
 
 	switch msgType {
 	case "Inform":
-		return h.handleInform(envelope.Body.Inform)
+		return h.handleInform(envelope.Body.Inform, remoteAddr)
 
 	case "GetParameterValuesResponse":
-		return h.handleGetParameterValuesResponse(envelope.Body.GetParameterValuesResp)
+		return h.handleGetParameterValuesResponse(envelope.Body.GetParameterValuesResp, remoteAddr)
 
 	case "SetParameterValuesResponse":
-		return h.handleSetParameterValuesResponse(envelope.Body.SetParameterValuesResp)
+		return h.handleSetParameterValuesResponse(envelope.Body.SetParameterValuesResp, remoteAddr)
 
 	case "RebootResponse":
-		return h.handleRebootResponse()
+		return h.handleRebootResponse(remoteAddr)
 
 	case "FactoryResetResponse":
-		return h.handleFactoryResetResponse()
+		return h.handleFactoryResetResponse(remoteAddr)
 
 	case "DownloadResponse":
-		return h.handleDownloadResponse(envelope.Body.DownloadResponse)
+		return h.handleDownloadResponse(envelope.Body.DownloadResponse, remoteAddr)
 
 	case "TransferComplete":
-		return h.handleTransferComplete(envelope.Body.TransferComplete)
+		return h.handleTransferComplete(envelope.Body.TransferComplete, remoteAddr)
 
 	case "Fault":
-		return h.handleFault(envelope.Body.Fault)
+		return h.handleFault(envelope.Body.Fault, remoteAddr)
 
 	default:
 		log.Printf("Unknown message type: %s", msgType)
@@ -125,7 +141,7 @@ func (h *Handler) routeMessage(envelope *SOAPEnvelope) (interface{}, error) {
 	}
 }
 
-func (h *Handler) handleInform(inform *Inform) (interface{}, error) {
+func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, error) {
 	response, err := ProcessInform(inform)
 	if err != nil {
 		return nil, err
@@ -165,6 +181,9 @@ func (h *Handler) handleInform(inform *Inform) (interface{}, error) {
 	session := h.sessions.GetOrCreate(sessionID, inform.DeviceId.SerialNumber)
 	session.State = StateInformReceived
 	session.DeviceID = deviceID
+	
+	// Store session by remote address for response matching
+	h.activeConns.Store(remoteAddr, session)
 
 	// Check for pending tasks in database
 	if h.taskRepo != nil && deviceID > 0 {
@@ -229,48 +248,55 @@ func (h *Handler) handleInform(inform *Inform) (interface{}, error) {
 	return response, nil
 }
 
-func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp) (interface{}, error) {
-	log.Printf("Received GetParameterValuesResponse with %d parameters", len(resp.ParameterList.Parameters))
+func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp, remoteAddr string) (interface{}, error) {
+	log.Printf("Received GetParameterValuesResponse with %d parameters from %s", len(resp.ParameterList.Parameters), remoteAddr)
 
-	for _, session := range h.sessions.sessions {
-		if session.State == StateProcessingTasks {
-			// Save parameters to database
-			if h.parameterRepo != nil && session.DeviceID > 0 {
-				params := make([]models.DeviceParameter, 0, len(resp.ParameterList.Parameters))
-				for _, p := range resp.ParameterList.Parameters {
-					params = append(params, models.DeviceParameter{
-						DeviceID: session.DeviceID,
-						Name:     p.Name,
-						Value:    p.Value,
-					})
-				}
-				if err := h.parameterRepo.UpsertMany(context.Background(), session.DeviceID, params); err != nil {
-					log.Printf("Error saving parameters: %v", err)
-				} else {
-					log.Printf("Saved %d parameters for device %d", len(params), session.DeviceID)
-				}
-			}
+	// Get session by remote address instead of looping all sessions
+	val, ok := h.activeConns.Load(remoteAddr)
+	if !ok {
+		log.Printf("No active session found for %s", remoteAddr)
+		return nil, nil
+	}
+	session := val.(*Session)
+	
+	if session.State != StateProcessingTasks {
+		log.Printf("Session for %s not in processing state", remoteAddr)
+		return nil, nil
+	}
 
-			// Handle auto-fetch phases
-			if session.AutoFetchPhase > 0 {
-				return h.continueAutoFetch(session)
-			}
-
-			// Handle manual task - mark as completed
-			if session.CurrentTaskID > 0 && h.taskRepo != nil {
-				result := make(map[string]string)
-				for _, p := range resp.ParameterList.Parameters {
-					result[p.Name] = p.Value
-				}
-				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, result, "")
-			}
-
-			// Check for more pending tasks
-			return h.getNextTask(context.Background(), session)
+	// Save parameters to database
+	if h.parameterRepo != nil && session.DeviceID > 0 {
+		params := make([]models.DeviceParameter, 0, len(resp.ParameterList.Parameters))
+		for _, p := range resp.ParameterList.Parameters {
+			params = append(params, models.DeviceParameter{
+				DeviceID: session.DeviceID,
+				Name:     p.Name,
+				Value:    p.Value,
+			})
+		}
+		if err := h.parameterRepo.UpsertMany(context.Background(), session.DeviceID, params); err != nil {
+			log.Printf("Error saving parameters: %v", err)
+		} else {
+			log.Printf("Saved %d parameters for device %d (serial: %s)", len(params), session.DeviceID, session.SerialNumber)
 		}
 	}
 
-	return nil, nil
+	// Handle auto-fetch phases
+	if session.AutoFetchPhase > 0 {
+		return h.continueAutoFetch(session)
+	}
+
+	// Handle manual task - mark as completed
+	if session.CurrentTaskID > 0 && h.taskRepo != nil {
+		result := make(map[string]string)
+		for _, p := range resp.ParameterList.Parameters {
+			result[p.Name] = p.Value
+		}
+		h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, result, "")
+	}
+
+	// Check for more pending tasks
+	return h.getNextTask(context.Background(), session)
 }
 
 // continueAutoFetch lanjut ke phase berikutnya dari auto-fetch
@@ -312,102 +338,116 @@ func (h *Handler) continueAutoFetch(session *Session) (interface{}, error) {
 }
 
 
-func (h *Handler) handleSetParameterValuesResponse(resp *SetParameterValuesResp) (interface{}, error) {
-	log.Printf("SetParameterValues status: %d", resp.Status)
+func (h *Handler) handleSetParameterValuesResponse(resp *SetParameterValuesResp, remoteAddr string) (interface{}, error) {
+	log.Printf("SetParameterValues status: %d from %s", resp.Status, remoteAddr)
 
-	for _, session := range h.sessions.sessions {
-		if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
-			if h.taskRepo != nil {
-				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, map[string]int{"status": resp.Status}, "")
-			}
-			return h.getNextTask(context.Background(), session)
+	val, ok := h.activeConns.Load(remoteAddr)
+	if !ok {
+		return nil, nil
+	}
+	session := val.(*Session)
+	
+	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
+		if h.taskRepo != nil {
+			h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, map[string]int{"status": resp.Status}, "")
 		}
+		return h.getNextTask(context.Background(), session)
 	}
 
 	return nil, nil
 }
 
-func (h *Handler) handleRebootResponse() (interface{}, error) {
-	log.Printf("Received RebootResponse")
+func (h *Handler) handleRebootResponse(remoteAddr string) (interface{}, error) {
+	log.Printf("Received RebootResponse from %s", remoteAddr)
 
-	for _, session := range h.sessions.sessions {
-		if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
-			if h.taskRepo != nil {
-				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
-			}
-			return h.getNextTask(context.Background(), session)
+	val, ok := h.activeConns.Load(remoteAddr)
+	if !ok {
+		return nil, nil
+	}
+	session := val.(*Session)
+	
+	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
+		if h.taskRepo != nil {
+			h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
 		}
+		return h.getNextTask(context.Background(), session)
 	}
 
 	return nil, nil
 }
 
-func (h *Handler) handleFactoryResetResponse() (interface{}, error) {
-	log.Printf("Received FactoryResetResponse")
+func (h *Handler) handleFactoryResetResponse(remoteAddr string) (interface{}, error) {
+	log.Printf("Received FactoryResetResponse from %s", remoteAddr)
 
-	for _, session := range h.sessions.sessions {
-		if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
-			if h.taskRepo != nil {
-				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
-			}
-			return h.getNextTask(context.Background(), session)
+	val, ok := h.activeConns.Load(remoteAddr)
+	if !ok {
+		return nil, nil
+	}
+	session := val.(*Session)
+	
+	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
+		if h.taskRepo != nil {
+			h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
 		}
+		return h.getNextTask(context.Background(), session)
 	}
 
 	return nil, nil
 }
 
-func (h *Handler) handleDownloadResponse(resp *DownloadResponse) (interface{}, error) {
+func (h *Handler) handleDownloadResponse(resp *DownloadResponse, remoteAddr string) (interface{}, error) {
 	if resp == nil {
 		return nil, nil
 	}
-	log.Printf("Received DownloadResponse: Status=%d", resp.Status)
+	log.Printf("Received DownloadResponse: Status=%d from %s", resp.Status, remoteAddr)
 
-	// Status 0 = completed immediately, 1 = download started (will get TransferComplete later)
-	for _, session := range h.sessions.sessions {
-		if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
-			if resp.Status == 0 {
-				// Completed immediately
-				if h.taskRepo != nil {
-					h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
-				}
-				return h.getNextTask(context.Background(), session)
+	val, ok := h.activeConns.Load(remoteAddr)
+	if !ok {
+		return nil, nil
+	}
+	session := val.(*Session)
+	
+	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
+		if resp.Status == 0 {
+			if h.taskRepo != nil {
+				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
 			}
-			// Status 1 = akan dapat TransferComplete nanti
-			log.Printf("Download started, waiting for TransferComplete")
-			return nil, nil
+			return h.getNextTask(context.Background(), session)
 		}
+		log.Printf("Download started, waiting for TransferComplete")
+		return nil, nil
 	}
 	return nil, nil
 }
 
-func (h *Handler) handleTransferComplete(tc *TransferComplete) (interface{}, error) {
+func (h *Handler) handleTransferComplete(tc *TransferComplete, remoteAddr string) (interface{}, error) {
 	if tc == nil {
 		return nil, nil
 	}
-	log.Printf("Received TransferComplete: CommandKey=%s, FaultCode=%d", tc.CommandKey, tc.FaultStruct.FaultCode)
+	log.Printf("Received TransferComplete: CommandKey=%s, FaultCode=%d from %s", tc.CommandKey, tc.FaultStruct.FaultCode, remoteAddr)
 
-	// Mark task as completed or failed based on FaultCode
-	for _, session := range h.sessions.sessions {
-		if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
-			if h.taskRepo != nil {
-				if tc.FaultStruct.FaultCode == 0 {
-					h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
-				} else {
-					h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusFailed, nil, tc.FaultStruct.FaultString)
-				}
+	val, ok := h.activeConns.Load(remoteAddr)
+	if !ok {
+		return &TransferCompleteResponse{}, nil
+	}
+	session := val.(*Session)
+	
+	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
+		if h.taskRepo != nil {
+			if tc.FaultStruct.FaultCode == 0 {
+				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
+			} else {
+				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusFailed, nil, tc.FaultStruct.FaultString)
 			}
-			// Send TransferCompleteResponse
-			return &TransferCompleteResponse{}, nil
 		}
+		return &TransferCompleteResponse{}, nil
 	}
 
-	// Jika tidak ada session aktif, tetap send response
 	return &TransferCompleteResponse{}, nil
 }
 
-func (h *Handler) handleFault(fault *SOAPFault) (interface{}, error) {
-	log.Printf("Received SOAP Fault: %s - %s", fault.FaultCode, fault.FaultString)
+func (h *Handler) handleFault(fault *SOAPFault, remoteAddr string) (interface{}, error) {
+	log.Printf("Received SOAP Fault: %s - %s from %s", fault.FaultCode, fault.FaultString, remoteAddr)
 
 	faultCode := fault.FaultCode
 	faultMessage := fault.FaultString
@@ -420,32 +460,33 @@ func (h *Handler) handleFault(fault *SOAPFault) (interface{}, error) {
 		faultMessage = fault.Detail.CWMPFault.FaultString
 	}
 
-	for _, session := range h.sessions.sessions {
-		if session.State == StateProcessingTasks {
-			// Simpan fault ke database (kecuali auto-fetch yang sering fault karena parameter tidak ada)
-			if h.faultRepo != nil && session.DeviceID > 0 && session.AutoFetchPhase == 0 {
-				deviceFault := &models.Fault{
-					DeviceID:    session.DeviceID,
-					FaultCode:   faultCode,
-					FaultString: faultMessage,
-				}
-				if err := h.faultRepo.Create(context.Background(), deviceFault); err != nil {
-					log.Printf("Error saving fault: %v", err)
-				}
-			}
+	val, ok := h.activeConns.Load(remoteAddr)
+	if !ok {
+		return nil, nil
+	}
+	session := val.(*Session)
 
-			// Jika sedang auto-fetch, skip ke phase berikutnya
-			if session.AutoFetchPhase > 0 {
-				log.Printf("Auto-fetch phase %d failed, continuing to next phase", session.AutoFetchPhase)
-				return h.continueAutoFetch(session)
+	if session.State == StateProcessingTasks {
+		if h.faultRepo != nil && session.DeviceID > 0 && session.AutoFetchPhase == 0 {
+			deviceFault := &models.Fault{
+				DeviceID:    session.DeviceID,
+				FaultCode:   faultCode,
+				FaultString: faultMessage,
 			}
-
-			// Mark manual task as failed
-			if session.CurrentTaskID > 0 && h.taskRepo != nil {
-				h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusFailed, nil, faultMessage)
+			if err := h.faultRepo.Create(context.Background(), deviceFault); err != nil {
+				log.Printf("Error saving fault: %v", err)
 			}
-			return h.getNextTask(context.Background(), session)
 		}
+
+		if session.AutoFetchPhase > 0 {
+			log.Printf("Auto-fetch phase %d failed, continuing to next phase", session.AutoFetchPhase)
+			return h.continueAutoFetch(session)
+		}
+
+		if session.CurrentTaskID > 0 && h.taskRepo != nil {
+			h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusFailed, nil, faultMessage)
+		}
+		return h.getNextTask(context.Background(), session)
 	}
 
 	return nil, nil
