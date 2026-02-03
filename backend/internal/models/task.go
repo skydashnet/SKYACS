@@ -65,9 +65,9 @@ func (j *JSON) UnmarshalJSON(data []byte) error {
 type Task struct {
 	ID           int64      `json:"id" gorm:"primaryKey;autoIncrement"`
 	DeviceID     int64      `json:"device_id" gorm:"index;not null"`
-	Type         TaskType   `json:"type" gorm:"not null"`
+	Type         TaskType   `json:"type" gorm:"type:text;not null"`
 	Payload      JSON       `json:"payload" gorm:"type:jsonb"`
-	Status       TaskStatus `json:"status" gorm:"default:'pending'"`
+	Status       TaskStatus `json:"status" gorm:"type:text;default:'pending'"`
 	Result       JSON       `json:"result" gorm:"type:jsonb"`
 	ErrorMessage string     `json:"error_message,omitempty"`
 	CreatedAt    time.Time  `json:"created_at" gorm:"autoCreateTime"`

@@ -11,9 +11,9 @@ const (
 
 type User struct {
 	ID           int64      `json:"id" gorm:"primaryKey;autoIncrement"`
-	Username     string     `json:"username" gorm:"uniqueIndex;not null"`
+	Username     string     `json:"username" gorm:"uniqueIndex:idx_users_username;not null"`
 	PasswordHash string     `json:"-" gorm:"column:password_hash;not null"`
-	Role         UserRole   `json:"role" gorm:"default:'read'"`
+	Role         UserRole   `json:"role" gorm:"type:text;default:'read'"`
 	CreatedAt    time.Time  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt    time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 	LastLogin    *time.Time `json:"last_login,omitempty"`

@@ -6,7 +6,7 @@ import (
 
 type Device struct {
 	ID                   int64      `json:"id" gorm:"primaryKey;autoIncrement"`
-	SerialNumber         string     `json:"serial_number" gorm:"uniqueIndex;not null"`
+	SerialNumber         string     `json:"serial_number" gorm:"uniqueIndex:idx_devices_serial_number;not null"`
 	OUI                  string     `json:"oui" gorm:"column:oui;not null"`
 	Manufacturer         *string    `json:"manufacturer"`
 	ProductClass         *string    `json:"product_class"`
@@ -33,8 +33,8 @@ type DeviceStats struct {
 
 type DeviceParameter struct {
 	ID        int64     `json:"id" gorm:"primaryKey;autoIncrement"`
-	DeviceID  int64     `json:"device_id" gorm:"index;not null"`
-	Name      string    `json:"name" gorm:"not null"`
+	DeviceID  int64     `json:"device_id" gorm:"uniqueIndex:idx_device_parameters_unique,priority:1;not null"`
+	Name      string    `json:"name" gorm:"uniqueIndex:idx_device_parameters_unique,priority:2;not null"`
 	Value     string    `json:"value"`
 	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
