@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -643,8 +644,7 @@ func (r *Router) handleConnectionRequest(w http.ResponseWriter, req *http.Reques
 		connReqUsername = device.SerialNumber
 	}
 	if useAutoCredentials || connReqPassword == "" {
-		hash := md5.Sum([]byte(device.SerialNumber + "miniacs"))
-		connReqPassword = hex.EncodeToString(hash[:])[:12]
+		connReqPassword = generateGenieACSPassword(device.SerialNumber)
 	}
 
 	log.Printf("[ConnReq] URL: %s, Username: %s, Password length: %d", connReqURL, connReqUsername, len(connReqPassword))
@@ -1094,8 +1094,7 @@ func (r *Router) handleConnectionRequestBySerial(w http.ResponseWriter, req *htt
 		connReqUsername = device.SerialNumber
 	}
 	if useAutoCredentials || connReqPassword == "" {
-		hash := md5.Sum([]byte(device.SerialNumber + "miniacs"))
-		connReqPassword = hex.EncodeToString(hash[:])[:12]
+		connReqPassword = generateGenieACSPassword(device.SerialNumber)
 	}
 
 	client := &http.Client{
@@ -1674,4 +1673,19 @@ func (r *Router) handleToggleProvisioningRule(w http.ResponseWriter, req *http.R
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "toggled"})
+}
+
+// generateGenieACSPassword generates password compatible with GenieACS
+// Replicates: Math.trunc(Math.random() * Number.MAX_SAFE_INTEGER).toString(36)
+// where Math.random() is seeded with device ID
+func generateGenieACSPassword(serialNumber string) string {
+	// Use MD5 hash as seed (like GenieACS seeds with device ID)
+	hash := md5.Sum([]byte(serialNumber))
+	// Get first 8 bytes as uint64
+	seed := binary.BigEndian.Uint64(hash[:8])
+	// Mask to Number.MAX_SAFE_INTEGER (2^53 - 1)
+	maxSafeInt := uint64(9007199254740991)
+	value := seed % maxSafeInt
+	// Convert to base36
+	return strconv.FormatUint(value, 36)
 }

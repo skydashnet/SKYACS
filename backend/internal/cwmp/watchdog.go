@@ -3,9 +3,10 @@ package cwmp
 import (
 	"context"
 	"crypto/md5"
-	"encoding/hex"
+	"encoding/binary"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/icholy/digest"
@@ -132,8 +133,7 @@ func (w *DeviceWatchdog) summonDevice(ctx context.Context, device *models.Device
 		username = device.SerialNumber
 	}
 	if useAuto || password == "" {
-		hash := md5.Sum([]byte(device.SerialNumber + "miniacs"))
-		password = hex.EncodeToString(hash[:])[:12]
+		password = generateGenieACSPassword(device.SerialNumber)
 	}
 
 	client := &http.Client{
@@ -180,4 +180,13 @@ type SummonError struct {
 
 func (e *SummonError) Error() string {
 	return "Device merespons dengan status " + e.Status
+}
+
+// generateGenieACSPassword generates password compatible with GenieACS
+func generateGenieACSPassword(serialNumber string) string {
+	hash := md5.Sum([]byte(serialNumber))
+	seed := binary.BigEndian.Uint64(hash[:8])
+	maxSafeInt := uint64(9007199254740991)
+	value := seed % maxSafeInt
+	return strconv.FormatUint(value, 36)
 }
