@@ -37,7 +37,7 @@ const settingFields: SettingField[] = [
   { key: 'connection_request_password', label: 'Connection Request Password', type: 'password', placeholder: 'Optional' },
 ];
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:7547/api';
+const API_BASE = import.meta.env.VITE_API_URL;
 
 const Settings: Component = () => {
   const { user, isFullAccess, logout } = useAuth();
