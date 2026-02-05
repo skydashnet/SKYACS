@@ -33,8 +33,6 @@ const settingFields: SettingField[] = [
   { key: 'acs_username', label: 'ACS Username', type: 'text', placeholder: 'Optional' },
   { key: 'acs_password', label: 'ACS Password', type: 'password', placeholder: 'Optional' },
   { key: 'inform_interval', label: 'Inform Interval (seconds)', type: 'number', placeholder: '3600' },
-  { key: 'connection_request_username', label: 'Connection Request Username', type: 'text', placeholder: 'admin' },
-  { key: 'connection_request_password', label: 'Connection Request Password', type: 'password', placeholder: 'Optional' },
 ];
 
 const API_BASE = import.meta.env.VITE_API_URL;
@@ -454,6 +452,58 @@ const Settings: Component = () => {
                 </div>
               )}
             </For>
+
+            {/* Connection Request Credentials Section */}
+            <div class="pt-4 border-t border-subtle">
+              <div class="flex items-center justify-between mb-3">
+                <div>
+                  <label class="block text-xs text-muted">Connection Request Credentials</label>
+                  <p class="text-xs text-muted mt-0.5">Mode untuk autentikasi connection request ke CPE</p>
+                </div>
+                <button
+                  onClick={() => handleChange('use_auto_conn_credentials', getValue('use_auto_conn_credentials') === 'true' ? 'false' : 'true')}
+                  class={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    getValue('use_auto_conn_credentials') === 'true'
+                      ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
+                      : 'bg-zinc-700 text-secondary border border-zinc-600'
+                  }`}
+                >
+                  {getValue('use_auto_conn_credentials') === 'true' ? 'Auto (Serial Number)' : 'Custom'}
+                </button>
+              </div>
+
+              <Show when={getValue('use_auto_conn_credentials') !== 'true'}>
+                <div class="space-y-3 pl-3 border-l-2 border-teal-500/30">
+                  <div>
+                    <label class="block text-xs text-muted mb-1.5">Connection Request Username</label>
+                    <input
+                      type="text"
+                      value={getValue('connection_request_username')}
+                      onInput={(e) => handleChange('connection_request_username', e.currentTarget.value)}
+                      placeholder="admin"
+                      class="input"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs text-muted mb-1.5">Connection Request Password</label>
+                    <input
+                      type="password"
+                      value={getValue('connection_request_password')}
+                      onInput={(e) => handleChange('connection_request_password', e.currentTarget.value)}
+                      placeholder="Optional"
+                      class="input"
+                    />
+                  </div>
+                </div>
+              </Show>
+
+              <Show when={getValue('use_auto_conn_credentials') === 'true'}>
+                <div class="p-3 bg-teal-500/10 border border-teal-500/20 text-xs text-teal-400">
+                  <p><strong>Username:</strong> Serial Number device</p>
+                  <p><strong>Password:</strong> Auto-generated hash dari Serial Number</p>
+                </div>
+              </Show>
+            </div>
           </div>
 
           <div class="mt-6 pt-4 border-t border-subtle">

@@ -625,6 +625,7 @@ func (r *Router) handleConnectionRequest(w http.ResponseWriter, req *http.Reques
 	settings, _ := r.settingsRepo.GetAll(req.Context())
 	connReqUsername := ""
 	connReqPassword := ""
+	useAutoCredentials := false
 	for _, s := range settings {
 		if s.Key == "connection_request_username" {
 			connReqUsername = s.Value
@@ -632,6 +633,18 @@ func (r *Router) handleConnectionRequest(w http.ResponseWriter, req *http.Reques
 		if s.Key == "connection_request_password" {
 			connReqPassword = s.Value
 		}
+		if s.Key == "use_auto_conn_credentials" && s.Value == "true" {
+			useAutoCredentials = true
+		}
+	}
+
+	// Jika mode auto atau credentials kosong, pakai serial number
+	if useAutoCredentials || connReqUsername == "" {
+		connReqUsername = device.SerialNumber
+	}
+	if useAutoCredentials || connReqPassword == "" {
+		hash := md5.Sum([]byte(device.SerialNumber + "miniacs"))
+		connReqPassword = hex.EncodeToString(hash[:])[:12]
 	}
 
 	log.Printf("[ConnReq] URL: %s, Username: %s, Password length: %d", connReqURL, connReqUsername, len(connReqPassword))
@@ -1063,6 +1076,7 @@ func (r *Router) handleConnectionRequestBySerial(w http.ResponseWriter, req *htt
 	settings, _ := r.settingsRepo.GetAll(req.Context())
 	connReqUsername := ""
 	connReqPassword := ""
+	useAutoCredentials := false
 	for _, s := range settings {
 		if s.Key == "connection_request_username" {
 			connReqUsername = s.Value
@@ -1070,6 +1084,18 @@ func (r *Router) handleConnectionRequestBySerial(w http.ResponseWriter, req *htt
 		if s.Key == "connection_request_password" {
 			connReqPassword = s.Value
 		}
+		if s.Key == "use_auto_conn_credentials" && s.Value == "true" {
+			useAutoCredentials = true
+		}
+	}
+
+	// Jika mode auto atau credentials kosong, pakai serial number
+	if useAutoCredentials || connReqUsername == "" {
+		connReqUsername = device.SerialNumber
+	}
+	if useAutoCredentials || connReqPassword == "" {
+		hash := md5.Sum([]byte(device.SerialNumber + "miniacs"))
+		connReqPassword = hex.EncodeToString(hash[:])[:12]
 	}
 
 	client := &http.Client{

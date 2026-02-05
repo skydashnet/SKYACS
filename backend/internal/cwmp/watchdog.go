@@ -2,6 +2,8 @@ package cwmp
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"time"
@@ -69,6 +71,7 @@ func (w *DeviceWatchdog) cekDeviceBandel(ctx context.Context) {
 	settings, _ := w.settingsRepo.GetAll(ctx)
 	connReqUsername := ""
 	connReqPassword := ""
+	useAutoCredentials := false
 	for _, s := range settings {
 		if s.Key == "connection_request_username" {
 			connReqUsername = s.Value
@@ -76,10 +79,13 @@ func (w *DeviceWatchdog) cekDeviceBandel(ctx context.Context) {
 		if s.Key == "connection_request_password" {
 			connReqPassword = s.Value
 		}
+		if s.Key == "use_auto_conn_credentials" && s.Value == "true" {
+			useAutoCredentials = true
+		}
 	}
 
 	for _, device := range devices {
-		err := w.summonDevice(ctx, device, connReqUsername, connReqPassword)
+		err := w.summonDevice(ctx, device, connReqUsername, connReqPassword, useAutoCredentials)
 		if err != nil {
 			w.retryCount[device.ID]++
 			log.Printf("[Watchdog] Gagal summon %s (attempt %d/%d): %v",
@@ -114,12 +120,21 @@ func (w *DeviceWatchdog) getStaleOnlineDevices(ctx context.Context) ([]*models.D
 	return devices, err
 }
 
-func (w *DeviceWatchdog) summonDevice(ctx context.Context, device *models.Device, username, password string) error {
+func (w *DeviceWatchdog) summonDevice(ctx context.Context, device *models.Device, username, password string, useAuto bool) error {
 	if device.ConnectionRequestURL == nil || *device.ConnectionRequestURL == "" {
 		return nil
 	}
 
 	connReqURL := *device.ConnectionRequestURL
+
+	// Jika mode auto atau credentials kosong, pakai serial number
+	if useAuto || username == "" {
+		username = device.SerialNumber
+	}
+	if useAuto || password == "" {
+		hash := md5.Sum([]byte(device.SerialNumber + "miniacs"))
+		password = hex.EncodeToString(hash[:])[:12]
+	}
 
 	client := &http.Client{
 		Timeout: 10 * time.Second,
