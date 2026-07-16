@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/skydashnet/miniacs/internal/api"
+	"github.com/skydashnet/miniacs/internal/auth"
 	"github.com/skydashnet/miniacs/internal/cwmp"
 	"github.com/skydashnet/miniacs/internal/database"
 	"github.com/skydashnet/miniacs/internal/models"
@@ -28,6 +31,9 @@ func main() {
 	}
 	if err := godotenv.Load(".miniacs.env"); err != nil {
 		log.Println("Tidak menemukan .miniacs.env file")
+	}
+	if err := auth.ConfigureJWT(os.Getenv("JWT_SECRET")); err != nil {
+		log.Fatalf("Security configuration error: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,10 +65,13 @@ func main() {
 	cwmpMux.Handle("/", cwmpHandler)
 
 	cwmpServer := &http.Server{
-		Addr:         ":" + cwmpPort,
-		Handler:      cwmpMux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:              ":" + cwmpPort,
+		Handler:           cwmpMux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	var apiServer *http.Server
@@ -72,10 +81,13 @@ func main() {
 		apiMux.Handle("/", apiRouter.Handler())
 
 		apiServer = &http.Server{
-			Addr:         ":" + apiPort,
-			Handler:      apiMux,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
+			Addr:              ":" + apiPort,
+			Handler:           apiMux,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    1 << 20,
 		}
 
 		watchdog := cwmp.NewDeviceWatchdog(db)
@@ -169,7 +181,7 @@ func connectDatabase() (*gorm.DB, error) {
 
 func runAutoMigrate(db *gorm.DB) error {
 	log.Println("Running database migrations...")
-	
+
 	allModels := []interface{}{
 		&models.Device{},
 		&models.DeviceParameter{},
@@ -178,20 +190,49 @@ func runAutoMigrate(db *gorm.DB) error {
 		&models.Fault{},
 		&models.Firmware{},
 		&models.ProvisioningRule{},
+		&models.AuditLog{},
+		&models.BlockedDevice{},
 		&database.Setting{},
 	}
-	
+
 	for _, model := range allModels {
 		if err := db.AutoMigrate(model); err != nil {
 			log.Printf("Warning: AutoMigrate for %T: %v", model, err)
 		}
 	}
-	
+
+	defaultSettings := []database.Setting{
+		{Key: "acs_url", Value: "http://localhost:7547/", Description: "Public CWMP endpoint advertised to devices"},
+		{Key: "firmware_base_url", Value: "http://localhost:7548", Description: "Public API base URL used by CPE firmware downloads"},
+		{Key: "acs_username", Value: "", Description: "Optional CPE-to-ACS username"},
+		{Key: "acs_password", Value: "", Description: "Optional CPE-to-ACS password"},
+		{Key: "inform_interval", Value: "3600", Description: "Periodic Inform interval in seconds"},
+		{Key: "connection_request_username", Value: "", Description: "Connection request username"},
+		{Key: "connection_request_password", Value: "", Description: "Connection request password"},
+		{Key: "use_auto_conn_credentials", Value: "true", Description: "Derive connection request credentials per device"},
+	}
+	for index := range defaultSettings {
+		if err := db.Where(database.Setting{Key: defaultSettings[index].Key}).FirstOrCreate(&defaultSettings[index]).Error; err != nil {
+			log.Printf("Warning: Failed to seed setting %s: %v", defaultSettings[index].Key, err)
+		}
+	}
+
 	var count int64
 	db.Model(&models.User{}).Count(&count)
 	if count == 0 {
-		log.Println("Creating default admin user...")
-		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
+		log.Println("Creating bootstrap administrator...")
+		initialPassword := os.Getenv("INITIAL_ADMIN_PASSWORD")
+		if initialPassword != "" {
+			if err := auth.ValidatePassword(initialPassword); err != nil {
+				return fmt.Errorf("invalid INITIAL_ADMIN_PASSWORD: %w", err)
+			}
+		} else {
+			initialPassword = generateBootstrapPassword()
+		}
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(initialPassword), 12)
+		if err != nil {
+			return fmt.Errorf("hash bootstrap password: %w", err)
+		}
 		admin := &models.User{
 			Username:     "admin",
 			PasswordHash: string(hashedPassword),
@@ -200,10 +241,19 @@ func runAutoMigrate(db *gorm.DB) error {
 		if err := db.Create(admin).Error; err != nil {
 			log.Printf("Warning: Failed to create admin user: %v", err)
 		} else {
-			log.Println("Default admin user created (username: admin, password: admin)")
+			log.Printf("Bootstrap administrator created. Username: admin Password: %s", initialPassword)
+			log.Println("Store this password securely; it is only printed once and should be rotated after first login.")
 		}
 	}
-	
+
 	log.Println("Database migrations completed")
 	return nil
+}
+
+func generateBootstrapPassword() string {
+	buffer := make([]byte, 12)
+	if _, err := rand.Read(buffer); err != nil {
+		panic(fmt.Sprintf("cannot generate bootstrap password: %v", err))
+	}
+	return "MiniACS-" + hex.EncodeToString(buffer)
 }

@@ -1,12 +1,14 @@
 import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For, createEffect, onMount, onCleanup } from 'solid-js';
 import { useParams, A, useNavigate } from '@solidjs/router';
-import { ArrowLeft, RefreshCw, RotateCcw, Trash2, Server, Network, Radio, Users, Zap, Edit, Save, X, HeartPulse, Send, Key } from 'lucide-solid';
+import { ArrowLeft, RefreshCw, RotateCcw, Trash2, Server, Network, Radio, Users, Zap, Edit, Save, X, HeartPulse, Send, Key, Eye, EyeOff, ShieldCheck } from 'lucide-solid';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 
 const DeviceDetail: Component = () => {
   const params = useParams<{ serial: string }>();
   const navigate = useNavigate();
+  const { isFullAccess } = useAuth();
   const serial = () => params.serial || '';
 
   const [device, { refetch: refetchDevice }] = createResource(serial, api.getDevice);
@@ -23,27 +25,12 @@ const DeviceDetail: Component = () => {
   const [autoRefresh] = createSignal(true);
   const [selectedParam, setSelectedParam] = createSignal<{ name: string; value: string } | null>(null);
   const [editingModemCreds, setEditingModemCreds] = createSignal(false);
+  const [showSensitive, setShowSensitive] = createSignal(false);
   const [modemCredsEdits, setModemCredsEdits] = createSignal<Record<string, string>>({});
 
-  const autoFetchParameters = async () => {
-    if (!device() || parameters()?.length) return;
-    try {
-      const allParams = [
-        'InternetGatewayDevice.',
-      ];
-      await api.getParameterValues(serial(), allParams);
-      showMessage('success', 'Parameter fetch task created. Tunggu beberapa detik lalu refresh.');
-    } catch (err) {
-      console.log('Auto-fetch skipped:', err);
-    }
-  };
 
 
-  createEffect(() => {
-    if (device() && !device.loading && (!parameters() || parameters()?.length === 0)) {
-      setTimeout(autoFetchParameters, 1000);
-    }
-  });
+
 
   onMount(() => {
     const interval = setInterval(() => {
@@ -278,8 +265,10 @@ const DeviceDetail: Component = () => {
     setActionLoading('modem-creds');
     try {
       const params: Record<string, string> = {};
+
+      let adminUserPath = '', adminPassPath = '', userUserPath = '', userPassPath = '';
+
       const allParams = parameters() || [];
-      
       const detectVendor = () => {
         for (const p of allParams) {
           if (p.name.includes('X_HW_WebUserInfo')) return 'huawei';
@@ -291,10 +280,7 @@ const DeviceDetail: Component = () => {
         }
         return 'huawei';
       };
-
       const vendor = detectVendor();
-      let adminUserPath = '', adminPassPath = '', userUserPath = '', userPassPath = '';
-
       switch (vendor) {
         case 'huawei':
           adminUserPath = 'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.UserName';
@@ -345,6 +331,8 @@ const DeviceDetail: Component = () => {
     }
     setActionLoading(null);
   };
+
+
 
   const refreshAll = () => { refetchDevice(); refetchParams(); refetchTasks(); };
 
@@ -424,7 +412,7 @@ const DeviceDetail: Component = () => {
     if (!uptime) return 'text-muted';
     const secs = parseInt(uptime);
     if (secs > 86400 * 7) return 'text-emerald-400';
-    if (secs > 86400) return 'text-teal-400';
+    if (secs > 86400) return 'text-sky-400';
     return 'text-amber-400';
   };
 
@@ -683,11 +671,14 @@ const DeviceDetail: Component = () => {
     );
   };
 
+  const isSensitiveParameter = (name: string) => /password|passphrase|presharedkey|privatekey|secret/i.test(name);
+  const displayParameterValue = (name: string, value: string) => isSensitiveParameter(name) && !showSensitive() ? '••••••••' : value;
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'completed': return 'badge-success';
       case 'pending': return 'badge-warning';
-      case 'sent': return 'bg-teal-500/15 text-teal-400';
+      case 'sent': return 'bg-sky-500/15 text-sky-400';
       case 'failed': return 'badge-error';
       default: return 'bg-zinc-700 text-secondary';
     }
@@ -714,10 +705,10 @@ const DeviceDetail: Component = () => {
           </Show>
         </div>
         <div class="flex gap-2">
-          <button onClick={handleSummon} disabled={actionLoading() !== null} class="btn btn-primary text-xs sm:text-sm">
+          <Show when={isFullAccess()}><button onClick={handleSummon} disabled={actionLoading() !== null} class="btn btn-primary text-xs sm:text-sm">
             <Zap size={14} />
             <span class="hidden sm:inline">{actionLoading() === 'summon' ? '...' : 'Summon'}</span>
-          </button>
+          </button></Show>
           <button onClick={refreshAll} class="btn btn-secondary text-xs sm:text-sm">
             <RefreshCw size={14} />
             <span class="hidden sm:inline">Refresh</span>
@@ -763,7 +754,7 @@ const DeviceDetail: Component = () => {
               </div>
 
               {/* Device Health - Compact Horizontal */}
-              <div class="card p-4 lg:col-span-4 border-l-2 border-teal-500">
+              <div class="card p-4 lg:col-span-4 border-l-2 border-sky-500">
                 <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
                   <HeartPulse size={14} />
                   Device Health
@@ -790,7 +781,7 @@ const DeviceDetail: Component = () => {
                 </div>
               </div>
               {/* Actions Card */}
-              <div class="card p-5 lg:col-span-3">
+              <Show when={isFullAccess()} fallback={<div class="card p-5 lg:col-span-3 flex flex-col justify-center"><ShieldCheck size={20} class="text-sky-500 mb-3" /><strong class="text-sm">Read-only workspace</strong><span class="text-[11px] text-muted mt-1">Configuration actions are restricted by RBAC.</span></div>}><div class="card p-5 lg:col-span-3">
                 <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
                   <Send size={14} />
                   Actions
@@ -809,7 +800,7 @@ const DeviceDetail: Component = () => {
                     Delete
                   </button>
                 </div>
-              </div>
+              </div></Show>
             </div>
 
             {/* Row 1.5: Modem Credentials */}
@@ -819,16 +810,16 @@ const DeviceDetail: Component = () => {
                   <Key size={14} />
                   Modem Credentials
                 </h2>
-                <Show when={!editingModemCreds()}>
+                <div class="flex items-center gap-1"><Show when={!editingModemCreds() && isFullAccess()}>
                   <button
                     onClick={handleEditModemCreds}
                     disabled={actionLoading() !== null}
-                    class="p-1.5 rounded hover:bg-elevated text-teal-500"
+                    class="p-1.5 rounded hover:bg-elevated text-sky-500"
                     title="Edit Credentials"
                   >
                     <Edit size={14} />
                   </button>
-                </Show>
+                </Show><button onClick={() => setShowSensitive(!showSensitive())} class="icon-button !w-7 !h-7" title={showSensitive() ? 'Hide secrets' : 'Reveal secrets'}>{showSensitive() ? <EyeOff size={13} /> : <Eye size={13} />}</button></div>
               </div>
               <Show when={editingModemCreds()} fallback={
                 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
@@ -838,7 +829,7 @@ const DeviceDetail: Component = () => {
                   </div>
                   <div>
                     <div class="text-muted text-xs mb-1">Admin Password</div>
-                    <div class="text-primary font-mono">{getModemCredentials().adminPass}</div>
+                    <div class="text-primary font-mono">{showSensitive() ? getModemCredentials().adminPass : '••••••••'}</div>
                   </div>
                   <div>
                     <div class="text-muted text-xs mb-1">User Username</div>
@@ -846,7 +837,7 @@ const DeviceDetail: Component = () => {
                   </div>
                   <div>
                     <div class="text-muted text-xs mb-1">User Password</div>
-                    <div class="text-primary font-mono">{getModemCredentials().userPass}</div>
+                    <div class="text-primary font-mono">{showSensitive() ? getModemCredentials().userPass : '••••••••'}</div>
                   </div>
                 </div>
               }>
@@ -854,7 +845,7 @@ const DeviceDetail: Component = () => {
                   <div>
                     <label class="text-muted text-xs mb-1 block">Admin Username</label>
                     <input
-                      type="text"
+                      type="password"
                       value={modemCredsEdits().adminUser || ''}
                       onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), adminUser: e.currentTarget.value })}
                       class="input w-full py-1.5 text-sm font-mono"
@@ -864,7 +855,7 @@ const DeviceDetail: Component = () => {
                   <div>
                     <label class="text-muted text-xs mb-1 block">Admin Password</label>
                     <input
-                      type="text"
+                      type="password"
                       value={modemCredsEdits().adminPass || ''}
                       onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), adminPass: e.currentTarget.value })}
                       class="input w-full py-1.5 text-sm font-mono"
@@ -991,12 +982,12 @@ const DeviceDetail: Component = () => {
                             <td class="px-2 py-2.5 text-center">{wan.ssid3 ? <span class="text-emerald-400">Y</span> : <span class="text-muted">-</span>}</td>
                             <td class="px-2 py-2.5 text-center">{wan.ssid4 ? <span class="text-emerald-400">Y</span> : <span class="text-muted">-</span>}</td>
                             <td class="px-2 py-2">
-                              <Show when={wan.type.includes('PPP') || (wan.username && wan.username !== '-')} fallback={<span class="text-muted text-xs">-</span>}>
+                              <Show when={isFullAccess() && (wan.type.includes('PPP') || (wan.username && wan.username !== '-'))} fallback={<span class="text-muted text-xs">-</span>}>
                                 <Show when={editingPPP() === wan.index} fallback={
                                   <button
                                     onClick={() => handleEditPPP(wan.index, wan.username, wan.password)}
                                     disabled={actionLoading() !== null}
-                                    class="p-1 rounded hover:bg-elevated text-teal-500"
+                                    class="p-1 rounded hover:bg-elevated text-sky-500"
                                     title="Edit PPPoE"
                                   >
                                     <Edit size={14} />
@@ -1064,13 +1055,13 @@ const DeviceDetail: Component = () => {
                           <tr class={`border-t border-subtle/30 hover:bg-elevated/50 transition-colors ${i() % 2 === 1 ? 'bg-elevated/20' : ''}`}>
                             <td class="px-3 py-2 text-secondary">SSID{wlan.index}</td>
                             <td class="px-3 py-2">
-                              <button 
+                              <Show when={isFullAccess()} fallback={<span class={`badge ${wlan.enabled ? 'badge-success' : 'badge-error'}`}>{wlan.enabled ? 'Yes' : 'No'}</span>}><button
                                 onClick={() => handleSetWifiEnabled(wlan.index, !wlan.enabled)}
                                 disabled={actionLoading() !== null}
                                 class={`badge cursor-pointer ${wlan.enabled ? 'badge-success' : 'badge-error'}`}
                               >
                                 {wlan.enabled ? 'Yes' : 'No'}
-                              </button>
+                              </button></Show>
                             </td>
                             <td class="px-3 py-2 text-secondary">{wlan.status}</td>
                             <td class="px-3 py-2">
@@ -1092,10 +1083,10 @@ const DeviceDetail: Component = () => {
                             <td class="px-3 py-2 text-secondary">{wlan.maxBitrate}</td>
                             <td class="px-3 py-2">
                               <Show when={editingWifi() === wlan.index} fallback={
-                                <span class="text-muted font-mono text-xs">{wlan.password}</span>
+                                <span class="text-muted font-mono text-xs">{showSensitive() ? wlan.password : '••••••••'}</span>
                               }>
                                 <input
-                                  type="text"
+                                  type="password"
                                   value={wifiEdits().password || ''}
                                   onInput={(e) => setWifiEdits({ ...wifiEdits(), password: e.currentTarget.value })}
                                   class="input py-1 px-2 text-sm w-28"
@@ -1104,10 +1095,10 @@ const DeviceDetail: Component = () => {
                               </Show>
                             </td>
                             <td class="px-3 py-2">
-                              <Show when={editingWifi() === wlan.index} fallback={
+                              <Show when={isFullAccess()}><Show when={editingWifi() === wlan.index} fallback={
                                 <button 
                                   onClick={() => handleEditWifi(wlan.index, wlan.ssid, wlan.password)}
-                                  class="text-teal-400 hover:text-teal-300 flex items-center gap-1"
+                                  class="text-sky-400 hover:text-sky-300 flex items-center gap-1"
                                 >
                                   <Edit size={12} /> Edit
                                 </button>
@@ -1127,7 +1118,7 @@ const DeviceDetail: Component = () => {
                                     <X size={14} />
                                   </button>
                                 </div>
-                              </Show>
+                              </Show></Show>
                             </td>
                           </tr>
                         )}
@@ -1171,7 +1162,7 @@ const DeviceDetail: Component = () => {
                             <td class="px-3 py-2">
                               <span class={`px-2 py-0.5 rounded text-xs ${
                                 host.interface.startsWith('WiFi') || host.interface.startsWith('SSID') 
-                                  ? 'bg-teal-500/20 text-teal-400' 
+                                  ? 'bg-sky-500/20 text-sky-400'
                                   : host.interface === 'Ethernet' 
                                     ? 'bg-blue-500/20 text-blue-400'
                                     : 'bg-zinc-700 text-secondary'
@@ -1235,7 +1226,10 @@ const DeviceDetail: Component = () => {
             {/* Row 6: All Parameters */}
             <div class="card overflow-hidden">
               <div class="p-5 border-b border-subtle flex items-center justify-between">
-                <h2 class="text-sm font-medium text-secondary">All Parameters ({filteredParams().length})</h2>
+                <div class="flex items-center gap-3">
+                  <h2 class="text-sm font-medium text-secondary">All Parameters ({filteredParams().length})</h2>
+
+                </div>
                 <input
                   type="text"
                   value={paramFilter()}
@@ -1266,7 +1260,7 @@ const DeviceDetail: Component = () => {
                           >
                             <td class="px-4 py-2 text-secondary font-mono text-xs truncate" title={param.name}>{param.name}</td>
                             <td class="px-4 py-2 text-primary text-xs truncate max-w-xs" title="Click to view full">
-                              {param.value.length > 100 ? param.value.slice(0, 100) + '...' : param.value}
+                              {displayParameterValue(param.name, param.value).length > 100 ? displayParameterValue(param.name, param.value).slice(0, 100) + '...' : displayParameterValue(param.name, param.value)}
                             </td>
                           </tr>
                         )}
@@ -1292,11 +1286,11 @@ const DeviceDetail: Component = () => {
             </div>
             <div class="mb-3">
               <label class="text-xs text-muted">Name</label>
-              <p class="text-teal-400 font-mono text-sm break-all">{selectedParam()?.name}</p>
+              <p class="text-sky-400 font-mono text-sm break-all">{selectedParam()?.name}</p>
             </div>
             <div class="flex-1 overflow-auto">
               <label class="text-xs text-muted">Value</label>
-              <pre class="mt-1 p-3 bg-elevated/50 rounded-lg text-primary text-sm font-mono whitespace-pre-wrap break-all overflow-auto max-h-96">{selectedParam()?.value}</pre>
+              <pre class="mt-1 p-3 bg-elevated/50 rounded-lg text-primary text-sm font-mono whitespace-pre-wrap break-all overflow-auto max-h-96">{selectedParam() ? displayParameterValue(selectedParam()!.name, selectedParam()!.value) : ''}</pre>
             </div>
             <div class="mt-4 flex justify-end">
               <button onClick={() => setSelectedParam(null)} class="btn btn-secondary">
@@ -1306,6 +1300,8 @@ const DeviceDetail: Component = () => {
           </div>
         </div>
       </Show>
+
+
     </div>
   );
 };

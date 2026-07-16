@@ -132,7 +132,12 @@ const Dashboard: Component = () => {
   }));
 
   return (
-    <div class="space-y-6">
+    <div class="space-y-5">
+      <div class="flex items-end justify-between gap-4">
+        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Fleet telemetry</p><h2 class="text-xl font-semibold tracking-[-.02em] mt-1">Network overview</h2><p class="text-xs text-muted mt-1">Operational status across every managed CPE.</p></div>
+        <div class="hidden sm:flex items-center gap-2 text-[10px] text-muted"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500" />Live database view</div>
+      </div>
+      <Show when={!stats.error} fallback={<div class="card p-4 border-red-500/30 text-red-400 text-xs">Unable to load fleet telemetry. Verify the API and database connection.</div>}>
       {/* ==================== ROW 1: Hero Stats ==================== */}
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Total Devices - Large Card */}
@@ -144,8 +149,8 @@ const Dashboard: Component = () => {
                 {stats()?.total ?? '-'}
               </p>
             </div>
-            <div class="p-3 rounded-xl bg-teal-500/10">
-              <Activity size={24} class="text-teal-500" />
+            <div class="p-3 rounded-[4px] bg-sky-500/10">
+              <Activity size={24} class="text-sky-500" />
             </div>
           </div>
           
@@ -173,7 +178,7 @@ const Dashboard: Component = () => {
             <div class="mt-4">
               <div class="h-2 rounded-full bg-elevated overflow-hidden">
                 <div 
-                  class="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
+                  class="h-full bg-emerald-500 transition-all duration-500"
                   style={{ width: `${onlinePercent()}%` }}
                 />
               </div>
@@ -324,6 +329,7 @@ const Dashboard: Component = () => {
           </Show>
         </div>
       </div>
+      </Show>
     </div>
   );
 };

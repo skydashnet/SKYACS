@@ -2,16 +2,22 @@ package cwmp
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
-	"sync"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/skydashnet/miniacs/internal/database"
-	"gorm.io/gorm"
 	"github.com/skydashnet/miniacs/internal/models"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -21,7 +27,10 @@ type Handler struct {
 	parameterRepo    *database.ParameterRepository
 	provisioningRepo *database.ProvisioningRepository
 	faultRepo        *database.FaultRepository
-	activeConns      sync.Map
+	blockedRepo      *database.BlockedDeviceRepository
+	cwmpUsername     string
+	cwmpPassword     string
+	allowedNetworks  []*net.IPNet
 }
 
 func NewHandler(db *gorm.DB) *Handler {
@@ -30,6 +39,7 @@ func NewHandler(db *gorm.DB) *Handler {
 	var parameterRepo *database.ParameterRepository
 	var provisioningRepo *database.ProvisioningRepository
 	var faultRepo *database.FaultRepository
+	var blockedRepo *database.BlockedDeviceRepository
 
 	if db != nil {
 		deviceRepo = database.NewDeviceRepository(db)
@@ -37,6 +47,8 @@ func NewHandler(db *gorm.DB) *Handler {
 		parameterRepo = database.NewParameterRepository(db)
 		provisioningRepo = database.NewProvisioningRepository(db)
 		faultRepo = database.NewFaultRepository(db)
+		blockedRepo = database.NewBlockedDeviceRepository(db)
+
 	}
 
 	return &Handler{
@@ -46,10 +58,26 @@ func NewHandler(db *gorm.DB) *Handler {
 		parameterRepo:    parameterRepo,
 		provisioningRepo: provisioningRepo,
 		faultRepo:        faultRepo,
+		blockedRepo:      blockedRepo,
+		cwmpUsername:     os.Getenv("CWMP_USERNAME"),
+		cwmpPassword:     os.Getenv("CWMP_PASSWORD"),
+		allowedNetworks:  parseAllowedNetworks(os.Getenv("CWMP_ALLOWED_CIDRS")),
 	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !h.isNetworkAllowed(r.RemoteAddr) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	if h.cwmpUsername != "" || h.cwmpPassword != "" {
+		username, password, ok := r.BasicAuth()
+		if !ok || !secureEqual(username, h.cwmpUsername) || !secureEqual(password, h.cwmpPassword) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="miniACS CWMP"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -60,15 +88,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sessionKey = cookie.Value
 	}
 	if sessionKey == "" {
-		sessionKey = fmt.Sprintf("sess_%d_%d", time.Now().UnixNano(), time.Now().UnixMicro()%10000)
+		sessionKey = newSessionKey()
 		http.SetCookie(w, &http.Cookie{
 			Name:     "cwmp_session",
 			Value:    sessionKey,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+			SameSite: http.SameSiteStrictMode,
+			MaxAge:   300,
 		})
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
 	envelope, err := ParseSOAPEnvelope(r.Body)
 	if err != nil {
 		log.Printf("Error parsing SOAP: %v", err)
@@ -116,6 +148,9 @@ func (h *Handler) routeMessage(envelope *SOAPEnvelope, remoteAddr string) (inter
 	case "GetParameterValuesResponse":
 		return h.handleGetParameterValuesResponse(envelope.Body.GetParameterValuesResp, remoteAddr)
 
+	case "GetParameterNamesResponse":
+		return h.handleGetParameterNamesResponse(envelope.Body.GetParameterNamesResp, remoteAddr)
+
 	case "SetParameterValuesResponse":
 		return h.handleSetParameterValuesResponse(envelope.Body.SetParameterValuesResp, remoteAddr)
 
@@ -141,6 +176,20 @@ func (h *Handler) routeMessage(envelope *SOAPEnvelope, remoteAddr string) (inter
 }
 
 func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, error) {
+	if inform == nil || inform.DeviceId.SerialNumber == "" {
+		return nil, fmt.Errorf("device serial number is required")
+	}
+	if h.blockedRepo != nil {
+		blocked, err := h.blockedRepo.IsBlocked(context.Background(), inform.DeviceId.SerialNumber)
+		if err != nil {
+			return nil, fmt.Errorf("check device admission: %w", err)
+		}
+		if blocked {
+			log.Printf("Blocked device rejected: %s", inform.DeviceId.SerialNumber)
+			return &InformResponse{MaxEnvelopes: 1}, nil
+		}
+	}
+
 	response, err := ProcessInform(inform)
 	if err != nil {
 		return nil, err
@@ -173,13 +222,26 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 			deviceID = device.ID
 			log.Printf("Device saved: %s (ID: %d)", device.SerialNumber, device.ID)
 		}
+
+		if h.parameterRepo != nil && deviceID > 0 && len(inform.ParameterList.Parameters) > 0 {
+			paramsToSave := make([]models.DeviceParameter, 0, len(inform.ParameterList.Parameters))
+			for _, parameter := range inform.ParameterList.Parameters {
+				paramsToSave = append(paramsToSave, models.DeviceParameter{
+					DeviceID: deviceID,
+					Name:     parameter.Name,
+					Value:    parameter.Value,
+				})
+			}
+			if err := h.parameterRepo.UpsertMany(context.Background(), deviceID, paramsToSave); err != nil {
+				log.Printf("Error saving Inform parameters: %v", err)
+			}
+		}
 	}
 
-	sessionID := inform.DeviceId.SerialNumber
-	session := h.sessions.GetOrCreate(sessionID, inform.DeviceId.SerialNumber)
+	session := h.sessions.GetOrCreate(remoteAddr, inform.DeviceId.SerialNumber)
 	session.State = StateInformReceived
 	session.DeviceID = deviceID
-	h.activeConns.Store(remoteAddr, session)
+	session.DataModelRoot = DetectDataModelRoot(inform.ParameterList.Parameters)
 
 	if h.taskRepo != nil && deviceID > 0 {
 		tasks, err := h.taskRepo.GetPendingByDeviceID(context.Background(), deviceID)
@@ -229,9 +291,7 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 			session.State = StateProcessingTasks
 			session.AutoFetchPhase = 1
 
-			return &GetParameterValues{
-				ParameterNames: []string{"InternetGatewayDevice.LANDevice.1.WLANConfiguration.1."},
-			}, nil
+			return &GetParameterValues{ParameterNames: []string{session.DataModelRoot}}, nil
 		}
 	}
 
@@ -241,13 +301,12 @@ func (h *Handler) handleInform(inform *Inform, remoteAddr string) (interface{}, 
 func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp, remoteAddr string) (interface{}, error) {
 	log.Printf("Received GetParameterValuesResponse with %d parameters from %s", len(resp.ParameterList.Parameters), remoteAddr)
 
-	val, ok := h.activeConns.Load(remoteAddr)
-	if !ok {
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
 		log.Printf("No active session found for %s", remoteAddr)
 		return nil, nil
 	}
-	session := val.(*Session)
-	
+
 	if session.State != StateProcessingTasks {
 		log.Printf("Session for %s not in processing state", remoteAddr)
 		return nil, nil
@@ -284,51 +343,46 @@ func (h *Handler) handleGetParameterValuesResponse(resp *GetParameterValuesResp,
 }
 
 func (h *Handler) continueAutoFetch(session *Session) (interface{}, error) {
-	session.AutoFetchPhase++
-
-	var paramPath string
-	switch session.AutoFetchPhase {
-	case 2:
-		paramPath = "InternetGatewayDevice.LANDevice.1.WLANConfiguration.2."
-	case 3:
-		paramPath = "InternetGatewayDevice.WANDevice.1."
-	case 4:
-		paramPath = "InternetGatewayDevice.DeviceInfo."
-	case 5:
-		paramPath = "InternetGatewayDevice.UserInterface.X_HW_WebUserInfo."
-	case 6:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount."
-	case 7:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount."
-	case 8:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_ZTE_COM_TeleComAccount."
-	case 9:
-		paramPath = "InternetGatewayDevice.DeviceInfo.X_FH_Account."
-	case 10:
-		paramPath = "Device.Users.User."
-	default:
-		session.AutoFetchPhase = 0
-		session.State = StateIdle
-		log.Printf("Auto-fetch completed for device %d", session.DeviceID)
-		return nil, nil
+	if session.AutoFetchPhase == 1 {
+		session.AutoFetchPhase = 2
+		return &GetParameterNames{ParameterPath: session.DataModelRoot, NextLevel: false}, nil
 	}
-
-	log.Printf("Auto-fetch phase %d: %s", session.AutoFetchPhase, paramPath)
-	return &GetParameterValues{
-		ParameterNames: []string{paramPath},
-	}, nil
+	session.AutoFetchPhase = 0
+	session.State = StateIdle
+	return nil, nil
 }
 
+func (h *Handler) handleGetParameterNamesResponse(resp *GetParameterNamesResp, remoteAddr string) (interface{}, error) {
+	if resp == nil {
+		return nil, nil
+	}
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
+		return nil, nil
+	}
+	if h.parameterRepo != nil && session.DeviceID > 0 {
+		params := make([]models.DeviceParameter, 0, len(resp.ParameterList))
+		for _, parameter := range resp.ParameterList {
+			writable := parameter.Writable
+			params = append(params, models.DeviceParameter{Name: parameter.Name, Writable: &writable})
+		}
+		if err := h.parameterRepo.UpsertWritable(context.Background(), session.DeviceID, params); err != nil {
+			log.Printf("Error saving writable parameter flags: %v", err)
+		}
+	}
+	session.AutoFetchPhase = 0
+	session.State = StateIdle
+	return h.getNextTask(context.Background(), session)
+}
 
 func (h *Handler) handleSetParameterValuesResponse(resp *SetParameterValuesResp, remoteAddr string) (interface{}, error) {
 	log.Printf("SetParameterValues status: %d from %s", resp.Status, remoteAddr)
 
-	val, ok := h.activeConns.Load(remoteAddr)
-	if !ok {
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
 		return nil, nil
 	}
-	session := val.(*Session)
-	
+
 	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
 		if h.taskRepo != nil {
 			h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, map[string]int{"status": resp.Status}, "")
@@ -342,12 +396,11 @@ func (h *Handler) handleSetParameterValuesResponse(resp *SetParameterValuesResp,
 func (h *Handler) handleRebootResponse(remoteAddr string) (interface{}, error) {
 	log.Printf("Received RebootResponse from %s", remoteAddr)
 
-	val, ok := h.activeConns.Load(remoteAddr)
-	if !ok {
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
 		return nil, nil
 	}
-	session := val.(*Session)
-	
+
 	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
 		if h.taskRepo != nil {
 			h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
@@ -361,12 +414,11 @@ func (h *Handler) handleRebootResponse(remoteAddr string) (interface{}, error) {
 func (h *Handler) handleFactoryResetResponse(remoteAddr string) (interface{}, error) {
 	log.Printf("Received FactoryResetResponse from %s", remoteAddr)
 
-	val, ok := h.activeConns.Load(remoteAddr)
-	if !ok {
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
 		return nil, nil
 	}
-	session := val.(*Session)
-	
+
 	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
 		if h.taskRepo != nil {
 			h.taskRepo.UpdateStatus(context.Background(), session.CurrentTaskID, models.TaskStatusCompleted, nil, "")
@@ -383,12 +435,11 @@ func (h *Handler) handleDownloadResponse(resp *DownloadResponse, remoteAddr stri
 	}
 	log.Printf("Received DownloadResponse: Status=%d from %s", resp.Status, remoteAddr)
 
-	val, ok := h.activeConns.Load(remoteAddr)
-	if !ok {
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
 		return nil, nil
 	}
-	session := val.(*Session)
-	
+
 	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
 		if resp.Status == 0 {
 			if h.taskRepo != nil {
@@ -408,12 +459,11 @@ func (h *Handler) handleTransferComplete(tc *TransferComplete, remoteAddr string
 	}
 	log.Printf("Received TransferComplete: CommandKey=%s, FaultCode=%d from %s", tc.CommandKey, tc.FaultStruct.FaultCode, remoteAddr)
 
-	val, ok := h.activeConns.Load(remoteAddr)
-	if !ok {
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
 		return &TransferCompleteResponse{}, nil
 	}
-	session := val.(*Session)
-	
+
 	if session.State == StateProcessingTasks && session.CurrentTaskID > 0 {
 		if h.taskRepo != nil {
 			if tc.FaultStruct.FaultCode == 0 {
@@ -442,11 +492,10 @@ func (h *Handler) handleFault(fault *SOAPFault, remoteAddr string) (interface{},
 		faultMessage = fault.Detail.CWMPFault.FaultString
 	}
 
-	val, ok := h.activeConns.Load(remoteAddr)
-	if !ok {
+	session := h.sessions.Get(remoteAddr)
+	if session == nil {
 		return nil, nil
 	}
-	session := val.(*Session)
 
 	if session.State == StateProcessingTasks {
 		if h.faultRepo != nil && session.DeviceID > 0 && session.AutoFetchPhase == 0 {
@@ -571,4 +620,62 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func newSessionKey() string {
+	value := make([]byte, 24)
+	if _, err := rand.Read(value); err != nil {
+		return fmt.Sprintf("sess_%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(value)
+}
+
+func secureEqual(left, right string) bool {
+	leftHash := sha256.Sum256([]byte(left))
+	rightHash := sha256.Sum256([]byte(right))
+	return subtle.ConstantTimeCompare(leftHash[:], rightHash[:]) == 1
+}
+
+func parseAllowedNetworks(value string) []*net.IPNet {
+	var networks []*net.IPNet
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if ip := net.ParseIP(item); ip != nil {
+			bits := 128
+			if ip.To4() != nil {
+				bits = 32
+			}
+			networks = append(networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		if _, network, err := net.ParseCIDR(item); err == nil {
+			networks = append(networks, network)
+		} else {
+			log.Printf("Ignoring invalid CWMP_ALLOWED_CIDRS entry %q", item)
+		}
+	}
+	return networks
+}
+
+func (h *Handler) isNetworkAllowed(remoteAddress string) bool {
+	if len(h.allowedNetworks) == 0 {
+		return true
+	}
+	host, _, err := net.SplitHostPort(remoteAddress)
+	if err != nil {
+		host = remoteAddress
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, network := range h.allowedNetworks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

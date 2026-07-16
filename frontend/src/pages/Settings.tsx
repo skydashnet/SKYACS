@@ -1,7 +1,8 @@
 import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For } from 'solid-js';
 import { Save, Settings as SettingsIcon, Info, Users, Plus, Trash2, Edit2, Key, LogOut } from 'lucide-solid';
-import { api } from '../lib/api';
+import { api, type ProvisioningRule, type User } from '../lib/api';
+
 import { useAuth } from '../lib/auth';
 
 interface SettingField {
@@ -11,31 +12,13 @@ interface SettingField {
   placeholder?: string;
 }
 
-interface User {
-  id: number;
-  username: string;
-  role: 'full' | 'read';
-  created_at: string;
-  last_login: string | null;
-}
-
-interface ProvisioningRule {
-  id: number;
-  parameter_name: string;
-  parameter_value: string;
-  parameter_type: string;
-  enabled: boolean;
-  description: string;
-}
-
 const settingFields: SettingField[] = [
-  { key: 'server_url', label: 'Server URL', type: 'text', placeholder: 'http://192.168.1.100:7547' },
+  { key: 'acs_url', label: 'ACS URL', type: 'text', placeholder: 'http://192.168.1.100:7547/' },
+  { key: 'firmware_base_url', label: 'Firmware base URL', type: 'text', placeholder: 'https://acs.example.com' },
   { key: 'acs_username', label: 'ACS Username', type: 'text', placeholder: 'Optional' },
   { key: 'acs_password', label: 'ACS Password', type: 'password', placeholder: 'Optional' },
   { key: 'inform_interval', label: 'Inform Interval (seconds)', type: 'number', placeholder: '3600' },
 ];
-
-const API_BASE = import.meta.env.VITE_API_URL;
 
 const Settings: Component = () => {
   const { user, isFullAccess, logout } = useAuth();
@@ -47,12 +30,7 @@ const Settings: Component = () => {
   // User management
   const [users, { refetch: refetchUsers }] = createResource(async () => {
     if (!isFullAccess()) return [];
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/users`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) return [];
-    return res.json() as Promise<User[]>;
+    return api.getUsers();
   });
 
   const [showUserModal, setShowUserModal] = createSignal(false);
@@ -66,17 +44,14 @@ const Settings: Component = () => {
   // Provisioning rules
   const [provRules, { refetch: refetchProvRules }] = createResource(async () => {
     if (!isFullAccess()) return [];
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/provisioning`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) return [];
-    return res.json() as Promise<ProvisioningRule[]>;
+    return api.getProvisioningRules();
   });
 
   const [showProvModal, setShowProvModal] = createSignal(false);
   const [editingProv, setEditingProv] = createSignal<ProvisioningRule | null>(null);
   const [provForm, setProvForm] = createSignal({ parameter_name: '', parameter_value: '', parameter_type: 'string', enabled: true, description: '' });
+
+
 
   const handleChange = (key: string, value: string) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
@@ -87,8 +62,7 @@ const Settings: Component = () => {
     setMessage(null);
 
     try {
-      const data = { ...settings(), ...formData() };
-      await api.updateSettings(data);
+      await api.updateSettings(formData());
       setMessage({ type: 'success', text: 'Settings berhasil disimpan!' });
       refetch();
       setFormData({});
@@ -104,58 +78,32 @@ const Settings: Component = () => {
   };
 
   const handleCreateUser = async () => {
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/users`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(userForm())
-    });
-    if (res.ok) {
+    try {
+      await api.createUser(userForm());
       setShowUserModal(false);
       setUserForm({ username: '', password: '', role: 'read' });
       refetchUsers();
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Gagal membuat user');
-    }
+    } catch (error) { alert((error as Error).message); }
   };
 
   const handleUpdateUser = async () => {
     const u = editingUser();
     if (!u) return;
-    const token = localStorage.getItem('token');
-    const body: Record<string, string> = { username: userForm().username, role: userForm().role };
+    const body: Partial<{ username: string; password: string; role: 'full' | 'read' }> = { username: userForm().username, role: userForm().role };
     if (userForm().password) body.password = userForm().password;
-    
-    const res = await fetch(`${API_BASE}/users/${u.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) {
+    try {
+      await api.updateUser(u.id, body);
       setShowUserModal(false);
       setEditingUser(null);
       setUserForm({ username: '', password: '', role: 'read' });
       refetchUsers();
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Gagal update user');
-    }
+    } catch (error) { alert((error as Error).message); }
   };
 
   const handleDeleteUser = async (id: number) => {
     if (!confirm('Yakin hapus user ini?')) return;
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/users/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (res.ok) {
-      refetchUsers();
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Gagal hapus user');
-    }
+    try { await api.deleteUser(id); refetchUsers(); }
+    catch (error) { alert((error as Error).message); }
   };
 
   const handleChangePassword = async () => {
@@ -163,20 +111,12 @@ const Settings: Component = () => {
       alert('Password baru tidak cocok');
       return;
     }
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/auth/change-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ current_password: passwordForm().current, new_password: passwordForm().newPass })
-    });
-    if (res.ok) {
+    try {
+      await api.changePassword(passwordForm().current, passwordForm().newPass);
       setShowPasswordModal(false);
       setPasswordForm({ current: '', newPass: '', confirm: '' });
       alert('Password berhasil diubah');
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Gagal ubah password');
-    }
+    } catch (error) { alert((error as Error).message); }
   };
 
   const openEditUser = (u: User) => {
@@ -193,61 +133,34 @@ const Settings: Component = () => {
 
   // Provisioning handlers
   const handleCreateProv = async () => {
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/provisioning`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(provForm())
-    });
-    if (res.ok) {
+    try {
+      await api.createProvisioningRule(provForm());
       setShowProvModal(false);
       setProvForm({ parameter_name: '', parameter_value: '', parameter_type: 'string', enabled: true, description: '' });
       refetchProvRules();
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Gagal membuat rule');
-    }
+    } catch (error) { alert((error as Error).message); }
   };
 
   const handleUpdateProv = async () => {
     const p = editingProv();
     if (!p) return;
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/provisioning/${p.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ...provForm(), id: p.id })
-    });
-    if (res.ok) {
+    try {
+      await api.updateProvisioningRule(p.id, provForm());
       setShowProvModal(false);
       setEditingProv(null);
       refetchProvRules();
-    } else {
-      const data = await res.json();
-      alert(data.error || 'Gagal update rule');
-    }
+    } catch (error) { alert((error as Error).message); }
   };
 
   const handleDeleteProv = async (id: number) => {
     if (!confirm('Yakin hapus rule ini?')) return;
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API_BASE}/provisioning/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (res.ok) {
-      refetchProvRules();
-    }
+    try { await api.deleteProvisioningRule(id); refetchProvRules(); }
+    catch (error) { alert((error as Error).message); }
   };
 
   const handleToggleProv = async (id: number, enabled: boolean) => {
-    const token = localStorage.getItem('token');
-    await fetch(`${API_BASE}/provisioning/${id}/toggle`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ enabled })
-    });
-    refetchProvRules();
+    try { await api.toggleProvisioningRule(id, enabled); refetchProvRules(); }
+    catch (error) { alert((error as Error).message); }
   };
 
   const openEditProv = (p: ProvisioningRule) => {
@@ -262,13 +175,15 @@ const Settings: Component = () => {
     setShowProvModal(true);
   };
 
+
+
   return (
     <div class="space-y-5">
       <div class="flex items-center justify-between">
-        <h1 class="text-xl font-semibold text-primary">Settings</h1>
+        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Control plane policy</p><h1 class="text-xl font-semibold text-primary mt-1">System settings</h1><p class="text-xs text-muted mt-1">Operator accounts, provisioning, and CWMP defaults.</p></div>
         <div class="flex items-center gap-2">
           <span class="text-sm text-muted">
-            Logged in as <span class="text-teal-400">{user()?.username}</span> ({user()?.role})
+            Logged in as <span class="text-sky-400">{user()?.username}</span> ({user()?.role})
           </span>
           <button onClick={() => { logout(); window.location.href = '/login'; }} class="btn btn-secondary text-xs py-1.5">
             <LogOut size={12} />
@@ -418,6 +333,8 @@ const Settings: Component = () => {
         </div>
       </Show>
 
+
+
       {/* ACS Settings */}
       <div class="card p-5">
         <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
@@ -448,6 +365,7 @@ const Settings: Component = () => {
                     onInput={(e) => handleChange(field.key, e.currentTarget.value)}
                     placeholder={field.placeholder}
                     class="input"
+                    disabled={!isFullAccess()}
                   />
                 </div>
               )}
@@ -464,7 +382,7 @@ const Settings: Component = () => {
                   onClick={() => handleChange('use_auto_conn_credentials', getValue('use_auto_conn_credentials') === 'true' ? 'false' : 'true')}
                   class={`px-3 py-1.5 text-xs font-medium transition-colors ${
                     getValue('use_auto_conn_credentials') === 'true'
-                      ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
+                      ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
                       : 'bg-zinc-700 text-secondary border border-zinc-600'
                   }`}
                 >
@@ -473,7 +391,7 @@ const Settings: Component = () => {
               </div>
 
               <Show when={getValue('use_auto_conn_credentials') !== 'true'}>
-                <div class="space-y-3 pl-3 border-l-2 border-teal-500/30">
+                <div class="space-y-3 pl-3 border-l-2 border-sky-500/30">
                   <div>
                     <label class="block text-xs text-muted mb-1.5">Connection Request Username</label>
                     <input
@@ -482,6 +400,7 @@ const Settings: Component = () => {
                       onInput={(e) => handleChange('connection_request_username', e.currentTarget.value)}
                       placeholder="admin"
                       class="input"
+                      disabled={!isFullAccess()}
                     />
                   </div>
                   <div>
@@ -492,13 +411,14 @@ const Settings: Component = () => {
                       onInput={(e) => handleChange('connection_request_password', e.currentTarget.value)}
                       placeholder="Optional"
                       class="input"
+                      disabled={!isFullAccess()}
                     />
                   </div>
                 </div>
               </Show>
 
               <Show when={getValue('use_auto_conn_credentials') === 'true'}>
-                <div class="p-3 bg-teal-500/10 border border-teal-500/20 text-xs text-teal-400">
+                <div class="p-3 bg-sky-500/10 border border-sky-500/20 text-xs text-sky-400">
                   <p><strong>Username:</strong> Serial Number device</p>
                   <p><strong>Password:</strong> Auto-generated hash dari Serial Number</p>
                 </div>
@@ -507,14 +427,14 @@ const Settings: Component = () => {
           </div>
 
           <div class="mt-6 pt-4 border-t border-subtle">
-            <button
+            <Show when={isFullAccess()}><button
               onClick={handleSave}
               disabled={saving()}
               class="btn btn-primary"
             >
               <Save size={14} />
               {saving() ? 'Menyimpan...' : 'Simpan Settings'}
-            </button>
+            </button></Show>
           </div>
         </Show>
       </div>
@@ -529,7 +449,7 @@ const Settings: Component = () => {
           <ol class="list-decimal list-inside space-y-1 ml-2">
             <li>Login ke CPE web interface</li>
             <li>Cari menu TR-069 atau CWMP settings</li>
-            <li>Set ACS URL ke: <code class="bg-elevated px-2 py-0.5 rounded text-teal-400">{getValue('server_url') || 'http://your-server:7547/'}</code></li>
+            <li>Set ACS URL ke: <code class="bg-elevated px-2 py-0.5 rounded text-sky-400">{getValue('acs_url') || 'http://your-server:7547/'}</code></li>
             <li>Set username/password jika diperlukan</li>
             <li>Save dan CPE akan auto-connect</li>
           </ol>
@@ -564,6 +484,7 @@ const Settings: Component = () => {
                   onInput={(e) => setUserForm(f => ({ ...f, password: e.currentTarget.value }))}
                   class="input w-full"
                   placeholder="Password"
+                  minlength={12}
                 />
               </div>
               <div>
@@ -603,6 +524,7 @@ const Settings: Component = () => {
                   value={passwordForm().current}
                   onInput={(e) => setPasswordForm(f => ({ ...f, current: e.currentTarget.value }))}
                   class="input w-full"
+                  minlength={12}
                 />
               </div>
               <div>
@@ -612,6 +534,7 @@ const Settings: Component = () => {
                   value={passwordForm().newPass}
                   onInput={(e) => setPasswordForm(f => ({ ...f, newPass: e.currentTarget.value }))}
                   class="input w-full"
+                  minlength={12}
                 />
               </div>
               <div>
@@ -621,6 +544,7 @@ const Settings: Component = () => {
                   value={passwordForm().confirm}
                   onInput={(e) => setPasswordForm(f => ({ ...f, confirm: e.currentTarget.value }))}
                   class="input w-full"
+                  minlength={12}
                 />
               </div>
               <div class="flex gap-2 pt-2">
@@ -695,6 +619,9 @@ const Settings: Component = () => {
           </div>
         </div>
       </Show>
+
+
+
     </div>
   );
 };

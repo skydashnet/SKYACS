@@ -1,26 +1,29 @@
 import type { Component, ParentComponent } from 'solid-js';
-import { Show } from 'solid-js';
+import { lazy, Show } from 'solid-js';
 import { Router, Route, Navigate } from '@solidjs/router';
 import { AuthProvider, useAuth } from './lib/auth';
 import { useTheme } from './lib/theme';
 import Layout from './components/Layout';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Devices from './pages/Devices';
-import DeviceDetail from './pages/DeviceDetail';
-import Faults from './pages/Faults';
-import Firmwares from './pages/Firmwares';
-import Settings from './pages/Settings';
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Devices = lazy(() => import('./pages/Devices'));
+const DeviceDetail = lazy(() => import('./pages/DeviceDetail'));
+const Faults = lazy(() => import('./pages/Faults'));
+const Firmwares = lazy(() => import('./pages/Firmwares'));
+const Security = lazy(() => import('./pages/Security'));
+const Settings = lazy(() => import('./pages/Settings'));
 
 // Initialize theme on app load
 useTheme();
 
 const ProtectedLayout: ParentComponent = (props) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, ready } = useAuth();
 
   return (
-    <Show when={isAuthenticated()} fallback={<Navigate href="/login" />}>
-      <Layout>{props.children}</Layout>
+    <Show when={ready()} fallback={<div class="app-loader"><span class="spinner" />Loading control plane…</div>}>
+      <Show when={isAuthenticated()} fallback={<Navigate href="/login" />}>
+        <Layout>{props.children}</Layout>
+      </Show>
     </Show>
   );
 };
@@ -36,6 +39,7 @@ const App: Component = () => {
           <Route path="/device/:serial" component={DeviceDetail} />
           <Route path="/faults" component={Faults} />
           <Route path="/firmwares" component={Firmwares} />
+          <Route path="/security" component={Security} />
           <Route path="/settings" component={Settings} />
         </Route>
       </Router>

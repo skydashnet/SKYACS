@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -24,7 +25,14 @@ type contextKey string
 
 const UserContextKey contextKey = "user"
 
-var jwtSecret = []byte("miniacs-jwt-secret-key-change-in-production")
+const (
+	jwtIssuer         = "miniacs"
+	jwtAudience       = "miniacs-web"
+	minSecretLength   = 32
+	minPasswordLength = 12
+)
+
+var jwtSecret []byte
 
 type Claims struct {
 	UserID   int64           `json:"user_id"`
@@ -51,8 +59,15 @@ func GenerateToken(user *models.User) (string, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now().Add(-30 * time.Second)),
 			Subject:   user.Username,
+			Issuer:    jwtIssuer,
+			Audience:  jwt.ClaimStrings{jwtAudience},
 		},
+	}
+
+	if len(jwtSecret) < minSecretLength {
+		return "", errors.New("JWT secret is not configured")
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -60,9 +75,16 @@ func GenerateToken(user *models.User) (string, error) {
 }
 
 func ValidateToken(tokenString string) (*Claims, error) {
+	if len(jwtSecret) < minSecretLength {
+		return nil, ErrInvalidToken
+	}
+
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, ErrInvalidToken
+		}
 		return jwtSecret, nil
-	})
+	}, jwt.WithIssuer(jwtIssuer), jwt.WithAudience(jwtAudience), jwt.WithLeeway(30*time.Second), jwt.WithValidMethods([]string{"HS256"}))
 
 	if err != nil {
 		return nil, ErrInvalidToken
@@ -79,25 +101,31 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			writeAuthError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			http.Error(w, `{"error":"invalid authorization header"}`, http.StatusUnauthorized)
+		parts := strings.Fields(authHeader)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			writeAuthError(w, `{"error":"invalid authorization header"}`, http.StatusUnauthorized)
 			return
 		}
 
 		claims, err := ValidateToken(parts[1])
 		if err != nil {
-			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+			writeAuthError(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), UserContextKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func writeAuthError(w http.ResponseWriter, body string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(body))
 }
 
 func GetUserFromContext(ctx context.Context) *Claims {
@@ -112,12 +140,12 @@ func RequireRole(role models.UserRole, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := GetUserFromContext(r.Context())
 		if claims == nil {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			writeAuthError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 
 		if claims.Role != models.RoleFull && claims.Role != role {
-			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			writeAuthError(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		}
 
@@ -129,12 +157,12 @@ func RequireFullAccess(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := GetUserFromContext(r.Context())
 		if claims == nil {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			writeAuthError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 
 		if claims.Role != models.RoleFull {
-			http.Error(w, `{"error":"forbidden - full access required"}`, http.StatusForbidden)
+			writeAuthError(w, `{"error":"forbidden - full access required"}`, http.StatusForbidden)
 			return
 		}
 
@@ -143,7 +171,35 @@ func RequireFullAccess(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func SetJWTSecret(secret string) {
-	if secret != "" {
-		jwtSecret = []byte(secret)
+	jwtSecret = []byte(secret)
+}
+
+func ConfigureJWT(secret string) error {
+	if len(secret) < minSecretLength {
+		return fmt.Errorf("JWT_SECRET must contain at least %d characters", minSecretLength)
 	}
+	SetJWTSecret(secret)
+	return nil
+}
+
+func ValidatePassword(password string) error {
+	if len(password) < minPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
+	}
+
+	var hasUpper, hasLower, hasNumber bool
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasNumber = true
+		}
+	}
+	if !hasUpper || !hasLower || !hasNumber {
+		return errors.New("password must include uppercase, lowercase, and numeric characters")
+	}
+	return nil
 }

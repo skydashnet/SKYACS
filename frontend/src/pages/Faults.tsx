@@ -2,58 +2,26 @@ import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For } from 'solid-js';
 import { A } from '@solidjs/router';
 import { AlertTriangle, CheckCircle, Trash2, RefreshCw } from 'lucide-solid';
-
-interface Fault {
-  id: number;
-  device_id: number;
-  serial_number: string;
-  fault_code: string;
-  fault_string: string;
-  parameter_name: string;
-  resolved: boolean;
-  created_at: string;
-  resolved_at: string | null;
-}
-
-interface FaultListResponse {
-  faults: Fault[];
-  total: number;
-  limit: number;
-  offset: number;
-}
+import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 
 const Faults: Component = () => {
+  const { isFullAccess } = useAuth();
   const [filter, setFilter] = createSignal<'all' | 'active' | 'resolved'>('active');
   const [faults, { refetch }] = createResource(
     () => filter(),
-    async (f) => {
-      const resolved = f === 'all' ? undefined : f === 'resolved';
-      const url = resolved === undefined 
-        ? '/faults?limit=100' 
-        : `/faults?limit=100&resolved=${resolved}`;
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:7547/api'}${url}`);
-      return response.json() as Promise<FaultListResponse>;
-    }
+    (selected) => api.getFaults(selected)
   );
 
-  const [stats] = createResource(async () => {
-    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:7547/api'}/faults/stats`);
-    return response.json();
-  });
+  const [stats, { refetch: refetchStats }] = createResource(() => api.getFaultStats());
 
   const handleResolve = async (id: number) => {
-    await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:7547/api'}/faults/${id}/resolve`, {
-      method: 'POST'
-    });
-    refetch();
+    try { await api.resolveFault(id); refetch(); refetchStats(); } catch (error) { alert((error as Error).message); }
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('Yakin hapus fault ini?')) return;
-    await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:7547/api'}/faults/${id}`, {
-      method: 'DELETE'
-    });
-    refetch();
+    try { await api.deleteFault(id); refetch(); refetchStats(); } catch (error) { alert((error as Error).message); }
   };
 
   const formatDate = (date: string) => {
@@ -70,7 +38,7 @@ const Faults: Component = () => {
   return (
     <div class="space-y-6">
       <div class="flex items-center justify-between">
-        <h1 class="text-xl font-semibold text-primary">Faults</h1>
+        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">CWMP diagnostics</p><h1 class="text-xl font-semibold text-primary mt-1">Fault center</h1><p class="text-xs text-muted mt-1">Investigate and resolve device-side protocol failures.</p></div>
         <button onClick={() => refetch()} class="btn btn-secondary">
           <RefreshCw size={14} />
           Refresh
@@ -168,7 +136,7 @@ const Faults: Component = () => {
                     {(fault) => (
                       <tr class="border-t border-subtle/50 hover:bg-elevated/30">
                         <td class="px-4 py-3">
-                          <A href={`/device/${fault.serial_number}`} class="text-teal-400 hover:underline font-mono text-xs">
+                          <A href={`/device/${fault.serial_number}`} class="text-sky-400 hover:underline font-mono text-xs">
                             {fault.serial_number}
                           </A>
                         </td>
@@ -193,7 +161,7 @@ const Faults: Component = () => {
                         </td>
                         <td class="px-4 py-3 text-right">
                           <div class="flex items-center justify-end gap-2">
-                            <Show when={!fault.resolved}>
+                            <Show when={!fault.resolved && isFullAccess()}>
                               <button 
                                 onClick={() => handleResolve(fault.id)}
                                 class="p-1.5 rounded hover:bg-emerald-500/20 text-muted hover:text-emerald-400 transition-fast"
@@ -202,13 +170,13 @@ const Faults: Component = () => {
                                 <CheckCircle size={14} />
                               </button>
                             </Show>
-                            <button 
+                            <Show when={isFullAccess()}><button
                               onClick={() => handleDelete(fault.id)}
                               class="p-1.5 rounded hover:bg-rose-500/20 text-muted hover:text-rose-400 transition-fast"
                               title="Delete"
                             >
                               <Trash2 size={14} />
-                            </button>
+                            </button></Show>
                           </div>
                         </td>
                       </tr>

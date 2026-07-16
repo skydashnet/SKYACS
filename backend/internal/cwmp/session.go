@@ -18,16 +18,17 @@ const (
 
 // Session represents single CPE session
 type Session struct {
-	ID            string
-	SerialNumber  string
-	DeviceID      int64
-	CurrentTaskID int64
-	AutoFetchPhase int // 0=done, 1=WiFi2.4G, 2=WiFi5G, 3=WAN, 4=DeviceInfo
-	State         SessionState
-	CreatedAt     time.Time
-	LastActivity  time.Time
+	ID             string
+	SerialNumber   string
+	DeviceID       int64
+	CurrentTaskID  int64
+	AutoFetchPhase int
+	DataModelRoot  string
 
-	// Pending tasks untuk device ini (legacy, now using database)
+	State        SessionState
+	CreatedAt    time.Time
+	LastActivity time.Time
+
 	PendingTasks []Task
 	TaskIndex    int
 }
@@ -106,7 +107,7 @@ func (sm *SessionManager) AddTask(serialNumber string, task Task) {
 		}
 	}
 
-	// TODO: Queue task untuk next session jika device offline
+	// The task remains queued and will be picked up by the next device session.
 }
 
 // GetNextTask get next pending task untuk session

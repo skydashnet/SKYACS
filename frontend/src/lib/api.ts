@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:7547/api';
+export const API_BASE = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:7548`;
 
 export interface Device {
   id: number;
@@ -15,176 +15,98 @@ export interface Device {
   online: boolean;
   created_at: string;
   updated_at: string;
+  parameters?: DeviceParameter[];
 }
 
-export interface DeviceStats {
-  total: number;
-  online: number;
-  offline: number;
-}
+export interface DeviceStats { total: number; online: number; offline: number }
+export interface DeviceListResponse { devices: Device[]; total: number; limit: number; offset: number }
+export interface DeviceParameter { id: number; device_id: number; name: string; value: string; writable?: boolean; updated_at: string }
+export interface Task { id: number; device_id: number; type: string; payload: unknown; status: string; result: unknown; error_message?: string; created_at: string; sent_at?: string; completed_at?: string }
+export interface Firmware { id: number; filename: string; version: string; manufacturer?: string; product_class?: string; file_size: number; checksum?: string; description?: string; created_at: string; updated_at: string }
+export interface Fault { id: number; device_id: number; serial_number: string; fault_code: string; fault_string: string; parameter_name: string; resolved: boolean; created_at: string; resolved_at: string | null }
+export interface User { id: number; username: string; role: 'full' | 'read'; created_at: string; last_login: string | null }
+export interface ProvisioningRule { id: number; parameter_name: string; parameter_value: string; parameter_type: string; enabled: boolean; description: string }
+export interface AuditLog { id: number; user_id?: number; username: string; action: string; resource: string; status: number; ip_address: string; user_agent?: string; created_at: string }
+export interface BlockedDevice { id: number; serial_number: string; reason: string; created_by: string; created_at: string }
 
-export interface DeviceListResponse {
-  devices: Device[];
-  total: number;
-  limit: number;
-  offset: number;
-}
+export const getStoredToken = () => sessionStorage.getItem('miniacs_token');
 
-export interface DeviceParameter {
-  id: number;
-  device_id: number;
-  name: string;
-  value: string;
-  updated_at: string;
-}
+export const clearStoredSession = () => {
+  sessionStorage.removeItem('miniacs_token');
+  localStorage.removeItem('token');
+};
 
-export interface Task {
-  id: number;
-  device_id: number;
-  type: string;
-  payload: unknown;
-  status: string;
-  result: unknown;
-  error_message?: string;
-  created_at: string;
-  sent_at?: string;
-  completed_at?: string;
-}
+export async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = getStoredToken();
+  const headers = new Headers(options.headers);
+  if (!(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
 
-export interface Firmware {
-  id: number;
-  filename: string;
-  version: string;
-  manufacturer?: string;
-  product_class?: string;
-  file_size: number;
-  file_path: string;
-  checksum?: string;
-  description?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
-
+  const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
   if (!response.ok) {
     if (response.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
-      throw new Error('Session expired');
+      clearStoredSession();
+      if (window.location.pathname !== '/login') window.location.assign('/login');
     }
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+    const error = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
+    throw new Error(error.error || `Request failed (${response.status})`);
   }
-
-  return response.json();
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
 }
 
 export const api = {
-  // Health check
-  health: () => fetchAPI<{ status: string }>('/health'),
+  health: () => request<{ status: string }>('/health'),
+  getDevices: (limit = 50, offset = 0) => request<DeviceListResponse>(`/devices?limit=${limit}&offset=${offset}`),
+  getDevice: (serial: string) => request<Device>(`/device/${encodeURIComponent(serial)}`),
+  getDeviceStats: () => request<DeviceStats>('/devices/stats'),
+  getDeviceAnalytics: () => request<{ rxPower: Record<string, number>; temperature: Record<string, number>; uptime: Record<string, number>; accessType: Record<string, number>; lastInform: Record<string, number>; wifiStations: Record<string, number> }>('/devices/analytics'),
+  getDeviceParameters: (serial: string) => request<DeviceParameter[]>(`/device/${encodeURIComponent(serial)}/parameters`),
+  getDeviceTasks: (serial: string) => request<Task[]>(`/device/${encodeURIComponent(serial)}/tasks`),
+  getParameterValues: (serial: string, parameters: string[]) => request<Task>(`/device/${encodeURIComponent(serial)}/get-parameters`, { method: 'POST', body: JSON.stringify({ parameters }) }),
+  setParameterValues: (serial: string, parameters: Record<string, string>) => request<Task>(`/device/${encodeURIComponent(serial)}/set-parameters`, { method: 'POST', body: JSON.stringify({ parameters }) }),
+  rebootDevice: (serial: string) => request<Task>(`/device/${encodeURIComponent(serial)}/reboot`, { method: 'POST' }),
+  factoryResetDevice: (serial: string) => request<Task>(`/device/${encodeURIComponent(serial)}/factory-reset`, { method: 'POST' }),
+  deleteDevice: (serial: string) => request<{ status: string }>(`/device/${encodeURIComponent(serial)}`, { method: 'DELETE' }),
+  connectionRequest: (serial: string) => request<{ status: string; url: string; message: string }>(`/device/${encodeURIComponent(serial)}/connection-request`, { method: 'POST' }),
+  downloadFirmware: (serial: string, firmwareId: number, fileType?: string) => request<Task>(`/device/${encodeURIComponent(serial)}/download-firmware`, { method: 'POST', body: JSON.stringify({ firmware_id: firmwareId, file_type: fileType }) }),
 
-  // Devices
-  getDevices: (limit = 50, offset = 0) =>
-    fetchAPI<DeviceListResponse>(`/devices?limit=${limit}&offset=${offset}`),
-
-  getDevice: (serial: string) =>
-    fetchAPI<Device>(`/device/${serial}`),
-
-  getDeviceStats: () =>
-    fetchAPI<DeviceStats>('/devices/stats'),
-
-  getDeviceAnalytics: () =>
-    fetchAPI<{
-      rxPower: Record<string, number>;
-      temperature: Record<string, number>;
-      uptime: Record<string, number>;
-      accessType: Record<string, number>;
-      lastInform: Record<string, number>;
-      wifiStations: Record<string, number>;
-    }>('/devices/analytics'),
-
-  getDeviceParameters: (serial: string) =>
-    fetchAPI<DeviceParameter[]>(`/device/${serial}/parameters`),
-
-  getDeviceTasks: (serial: string) =>
-    fetchAPI<Task[]>(`/device/${serial}/tasks`),
-
-  // Device Actions
-  getParameterValues: (serial: string, parameters: string[]) =>
-    fetchAPI<Task>(`/device/${serial}/get-parameters`, {
-      method: 'POST',
-      body: JSON.stringify({ parameters }),
-    }),
-
-  setParameterValues: (serial: string, parameters: Record<string, string>) =>
-    fetchAPI<Task>(`/device/${serial}/set-parameters`, {
-      method: 'POST',
-      body: JSON.stringify({ parameters }),
-    }),
-
-  rebootDevice: (serial: string) =>
-    fetchAPI<Task>(`/device/${serial}/reboot`, { method: 'POST' }),
-
-  factoryResetDevice: (serial: string) =>
-    fetchAPI<Task>(`/device/${serial}/factory-reset`, { method: 'POST' }),
-
-  deleteDevice: (serial: string) =>
-    fetchAPI<{ status: string }>(`/device/${serial}`, { method: 'DELETE' }),
-
-  connectionRequest: (serial: string) =>
-    fetchAPI<{ status: string; url: string; message: string }>(`/device/${serial}/connection-request`, { method: 'POST' }),
-
-  downloadFirmware: (serial: string, firmwareId: number, fileType?: string) =>
-    fetchAPI<Task>(`/device/${serial}/download-firmware`, {
-      method: 'POST',
-      body: JSON.stringify({ firmware_id: firmwareId, file_type: fileType }),
-    }),
-
-  // Firmwares
-  getFirmwares: () => fetchAPI<Firmware[]>('/firmwares'),
-
-  uploadFirmware: async (file: File, version: string, manufacturer?: string, productClass?: string, description?: string): Promise<Firmware> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('version', version);
-    if (manufacturer) formData.append('manufacturer', manufacturer);
-    if (productClass) formData.append('product_class', productClass);
-    if (description) formData.append('description', description);
-
-    const response = await fetch(`${API_BASE}/firmwares`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    return response.json();
+  getFirmwares: () => request<Firmware[]>('/firmwares'),
+  uploadFirmware: (file: File, version: string, manufacturer?: string, productClass?: string, description?: string) => {
+    const body = new FormData();
+    body.append('file', file);
+    body.append('version', version);
+    if (manufacturer) body.append('manufacturer', manufacturer);
+    if (productClass) body.append('product_class', productClass);
+    if (description) body.append('description', description);
+    return request<Firmware>('/firmwares', { method: 'POST', body });
   },
+  deleteFirmware: (id: number) => request<{ status: string }>(`/firmwares/${id}`, { method: 'DELETE' }),
 
-  deleteFirmware: (id: number) =>
-    fetchAPI<{ status: string }>(`/firmwares/${id}`, { method: 'DELETE' }),
+  getFaults: (filter: 'all' | 'active' | 'resolved' = 'active') => {
+    const resolved = filter === 'all' ? '' : `&resolved=${filter === 'resolved'}`;
+    return request<{ faults: Fault[]; total: number; limit: number; offset: number }>(`/faults?limit=100${resolved}`);
+  },
+  getFaultStats: () => request<{ total: number; active: number; resolved: number }>('/faults/stats'),
+  resolveFault: (id: number) => request<{ status: string }>(`/faults/${id}/resolve`, { method: 'POST' }),
+  deleteFault: (id: number) => request<{ status: string }>(`/faults/${id}`, { method: 'DELETE' }),
 
-  // Settings
-  getSettings: () =>
-    fetchAPI<Record<string, string>>('/settings'),
+  getSettings: () => request<Record<string, string>>('/settings'),
+  updateSettings: (settings: Record<string, string>) => request<{ status: string }>('/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  getUsers: () => request<User[]>('/users'),
+  createUser: (body: { username: string; password: string; role: 'full' | 'read' }) => request<User>('/users', { method: 'POST', body: JSON.stringify(body) }),
+  updateUser: (id: number, body: Partial<{ username: string; password: string; role: 'full' | 'read' }>) => request<User>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteUser: (id: number) => request<{ status: string }>(`/users/${id}`, { method: 'DELETE' }),
+  changePassword: (currentPassword: string, newPassword: string) => request<{ status: string }>('/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
+  getProvisioningRules: () => request<ProvisioningRule[]>('/provisioning'),
+  createProvisioningRule: (body: Omit<ProvisioningRule, 'id'>) => request<ProvisioningRule>('/provisioning', { method: 'POST', body: JSON.stringify(body) }),
+  updateProvisioningRule: (id: number, body: Omit<ProvisioningRule, 'id'>) => request<ProvisioningRule>(`/provisioning/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteProvisioningRule: (id: number) => request<{ status: string }>(`/provisioning/${id}`, { method: 'DELETE' }),
+  toggleProvisioningRule: (id: number, enabled: boolean) => request<{ status: string }>(`/provisioning/${id}/toggle`, { method: 'POST', body: JSON.stringify({ enabled }) }),
 
-  updateSettings: (settings: Record<string, string>) =>
-    fetchAPI<{ status: string }>('/settings', {
-      method: 'PUT',
-      body: JSON.stringify(settings),
-    }),
+  getSecurityOverview: () => request<{ total_users: number; full_access_admins: number; recorded_failures: number; jwt_configured: boolean; login_rate_limit_enabled: boolean; cors_restricted: boolean; audit_logging_enabled: boolean }>('/security/overview'),
+  getAuditLogs: (limit = 100) => request<{ entries: AuditLog[]; total: number; limit: number; offset: number }>(`/audit-logs?limit=${limit}`),
+  getBlockedDevices: () => request<BlockedDevice[]>('/blocked-devices'),
+  blockDevice: (serialNumber: string, reason: string) => request<BlockedDevice>('/blocked-devices', { method: 'POST', body: JSON.stringify({ serial_number: serialNumber, reason }) }),
+  unblockDevice: (serialNumber: string) => request<{ status: string }>(`/blocked-devices/${encodeURIComponent(serialNumber)}`, { method: 'DELETE' }),
 };
-

@@ -81,3 +81,9 @@ func (r *UserRepository) Count(ctx context.Context) (int, error) {
 	err := r.db.WithContext(ctx).Model(&models.User{}).Count(&count).Error
 	return int(count), err
 }
+
+func (r *UserRepository) CountByRole(ctx context.Context, role models.UserRole) (int, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.User{}).Where("role = ?", role).Count(&count).Error
+	return int(count), err
+}
