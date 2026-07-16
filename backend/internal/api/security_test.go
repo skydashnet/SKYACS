@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/hex"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -19,6 +21,23 @@ func TestValidUsername(t *testing.T) {
 	}
 }
 
+func TestClientIPOnlyTrustsConfiguredProxy(t *testing.T) {
+	t.Setenv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
+	trusted := httptest.NewRequest("GET", "/", nil)
+	trusted.RemoteAddr = "127.0.0.1:1234"
+	trusted.Header.Set("X-Forwarded-For", "203.0.113.66, 198.51.100.25, 127.0.0.1")
+	if got := clientIP(trusted); got != "198.51.100.25" {
+		t.Fatalf("trusted proxy address not used: %q", got)
+	}
+
+	untrusted := httptest.NewRequest("GET", "/", nil)
+	untrusted.RemoteAddr = "203.0.113.9:1234"
+	untrusted.Header.Set("X-Forwarded-For", "198.51.100.25")
+	if got := clientIP(untrusted); got != "203.0.113.9" {
+		t.Fatalf("untrusted proxy spoofed client address: %q", got)
+	}
+}
+
 func TestFirmwareTokenUsesCryptographicEntropy(t *testing.T) {
 	token, err := newFirmwareToken()
 	if err != nil {
@@ -32,8 +51,10 @@ func TestFirmwareTokenUsesCryptographicEntropy(t *testing.T) {
 
 func TestLoginLimiter(t *testing.T) {
 	limiter := newLoginLimiter(2, time.Hour)
-	if !limiter.Allow("192.0.2.1") || !limiter.Allow("192.0.2.1") {
-		t.Fatal("valid attempts rejected")
+	for attempt := 0; attempt < 2; attempt++ {
+		if !limiter.Allow("192.0.2.1") {
+			t.Fatal("valid attempt rejected")
+		}
 	}
 	if limiter.Allow("192.0.2.1") {
 		t.Fatal("rate limit was not enforced")
@@ -41,5 +62,17 @@ func TestLoginLimiter(t *testing.T) {
 	limiter.Reset("192.0.2.1")
 	if !limiter.Allow("192.0.2.1") {
 		t.Fatal("reset did not clear attempts")
+	}
+}
+
+func TestLoginLimiterHasBoundedMemory(t *testing.T) {
+	limiter := newLoginLimiter(1, time.Hour)
+	for index := 0; index < maxLimiterEntries; index++ {
+		if !limiter.Allow(strconv.Itoa(index)) {
+			t.Fatalf("entry %d rejected before the cap", index)
+		}
+	}
+	if limiter.Allow("over-cap") {
+		t.Fatal("limiter accepted an entry beyond its memory cap")
 	}
 }

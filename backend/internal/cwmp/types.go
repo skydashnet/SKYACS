@@ -4,33 +4,36 @@ import "encoding/xml"
 
 // SOAP Envelope structure untuk TR-069/CWMP
 type SOAPEnvelope struct {
-	XMLName xml.Name   `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
-	Header  SOAPHeader `xml:"Header"`
-	Body    SOAPBody   `xml:"Body"`
+	XMLName       xml.Name   `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
+	CWMPNamespace string     `xml:"-"`
+	Header        SOAPHeader `xml:"Header"`
+	Body          SOAPBody   `xml:"Body"`
 }
 
 type SOAPHeader struct {
-	ID       string `xml:"http://schemas.xmlsoap.org/soap/envelope/ ID,omitempty"`
-	HoldReqs string `xml:"urn:dslforum-org:cwmp-1-0 HoldRequests,omitempty"`
+	Namespace string `xml:"-"`
+	ID        string `xml:"ID,omitempty"`
+	HoldReqs  string `xml:"HoldRequests,omitempty"`
 }
 
 type SOAPBody struct {
-	Inform                 *Inform                   `xml:"urn:dslforum-org:cwmp-1-0 Inform,omitempty"`
-	InformResponse         *InformResponse           `xml:"urn:dslforum-org:cwmp-1-0 InformResponse,omitempty"`
-	GetParameterValues     *GetParameterValues       `xml:"urn:dslforum-org:cwmp-1-0 GetParameterValues,omitempty"`
-	GetParameterValuesResp *GetParameterValuesResp   `xml:"urn:dslforum-org:cwmp-1-0 GetParameterValuesResponse,omitempty"`
-	SetParameterValues     *SetParameterValues       `xml:"urn:dslforum-org:cwmp-1-0 SetParameterValues,omitempty"`
-	SetParameterValuesResp *SetParameterValuesResp   `xml:"urn:dslforum-org:cwmp-1-0 SetParameterValuesResponse,omitempty"`
-	GetParameterNames      *GetParameterNames        `xml:"urn:dslforum-org:cwmp-1-0 GetParameterNames,omitempty"`
-	GetParameterNamesResp  *GetParameterNamesResp    `xml:"urn:dslforum-org:cwmp-1-0 GetParameterNamesResponse,omitempty"`
-	Reboot                 *Reboot                   `xml:"urn:dslforum-org:cwmp-1-0 Reboot,omitempty"`
-	RebootResponse         *RebootResponse           `xml:"urn:dslforum-org:cwmp-1-0 RebootResponse,omitempty"`
-	FactoryReset           *FactoryReset             `xml:"urn:dslforum-org:cwmp-1-0 FactoryReset,omitempty"`
-	FactoryResetResponse   *FactoryResetResponse     `xml:"urn:dslforum-org:cwmp-1-0 FactoryResetResponse,omitempty"`
-	Download               *Download                 `xml:"urn:dslforum-org:cwmp-1-0 Download,omitempty"`
-	DownloadResponse       *DownloadResponse         `xml:"urn:dslforum-org:cwmp-1-0 DownloadResponse,omitempty"`
-	TransferComplete       *TransferComplete         `xml:"urn:dslforum-org:cwmp-1-0 TransferComplete,omitempty"`
-	TransferCompleteResp   *TransferCompleteResponse `xml:"urn:dslforum-org:cwmp-1-0 TransferCompleteResponse,omitempty"`
+	Namespace              string                    `xml:"-"`
+	Inform                 *Inform                   `xml:"Inform,omitempty"`
+	InformResponse         *InformResponse           `xml:"InformResponse,omitempty"`
+	GetParameterValues     *GetParameterValues       `xml:"GetParameterValues,omitempty"`
+	GetParameterValuesResp *GetParameterValuesResp   `xml:"GetParameterValuesResponse,omitempty"`
+	SetParameterValues     *SetParameterValues       `xml:"SetParameterValues,omitempty"`
+	SetParameterValuesResp *SetParameterValuesResp   `xml:"SetParameterValuesResponse,omitempty"`
+	GetParameterNames      *GetParameterNames        `xml:"GetParameterNames,omitempty"`
+	GetParameterNamesResp  *GetParameterNamesResp    `xml:"GetParameterNamesResponse,omitempty"`
+	Reboot                 *Reboot                   `xml:"Reboot,omitempty"`
+	RebootResponse         *RebootResponse           `xml:"RebootResponse,omitempty"`
+	FactoryReset           *FactoryReset             `xml:"FactoryReset,omitempty"`
+	FactoryResetResponse   *FactoryResetResponse     `xml:"FactoryResetResponse,omitempty"`
+	Download               *Download                 `xml:"Download,omitempty"`
+	DownloadResponse       *DownloadResponse         `xml:"DownloadResponse,omitempty"`
+	TransferComplete       *TransferComplete         `xml:"TransferComplete,omitempty"`
+	TransferCompleteResp   *TransferCompleteResponse `xml:"TransferCompleteResponse,omitempty"`
 	Fault                  *SOAPFault                `xml:"http://schemas.xmlsoap.org/soap/envelope/ Fault,omitempty"`
 }
 
@@ -61,12 +64,14 @@ type EventStruct struct {
 }
 
 type ParameterList struct {
+	Namespace  string                 `xml:"-"`
 	Parameters []ParameterValueStruct `xml:"ParameterValueStruct"`
 }
 
 type ParameterValueStruct struct {
 	Name  string `xml:"Name"`
 	Value string `xml:"Value"`
+	Type  string `xml:"-"`
 }
 
 // InformResponse dari ACS ke CPE
@@ -118,7 +123,8 @@ type SOAPFault struct {
 }
 
 type FaultDetail struct {
-	CWMPFault *CWMPFault `xml:"urn:dslforum-org:cwmp-1-0 Fault,omitempty"`
+	Namespace string     `xml:"-"`
+	CWMPFault *CWMPFault `xml:"Fault,omitempty"`
 }
 
 type CWMPFault struct {
@@ -141,34 +147,30 @@ const (
 
 // Reboot - ACS command ke CPE
 type Reboot struct {
-	XMLName    xml.Name `xml:"urn:dslforum-org:cwmp-1-0 Reboot"`
-	CommandKey string   `xml:"CommandKey"`
+	CommandKey string `xml:"CommandKey"`
 }
 
 // RebootResponse - CPE response
 type RebootResponse struct{}
 
 // FactoryReset - ACS command ke CPE
-type FactoryReset struct {
-	XMLName xml.Name `xml:"urn:dslforum-org:cwmp-1-0 FactoryReset"`
-}
+type FactoryReset struct{}
 
 // FactoryResetResponse - CPE response
 type FactoryResetResponse struct{}
 
 // Download - ACS command ke CPE untuk download firmware/config
 type Download struct {
-	XMLName        xml.Name `xml:"urn:dslforum-org:cwmp-1-0 Download"`
-	CommandKey     string   `xml:"CommandKey"`
-	FileType       string   `xml:"FileType"` // "1 Firmware Upgrade Image", "3 Vendor Configuration File"
-	URL            string   `xml:"URL"`
-	Username       string   `xml:"Username"`
-	Password       string   `xml:"Password"`
-	FileSize       int64    `xml:"FileSize"`
-	TargetFileName string   `xml:"TargetFileName"`
-	DelaySeconds   int      `xml:"DelaySeconds"`
-	SuccessURL     string   `xml:"SuccessURL"`
-	FailureURL     string   `xml:"FailureURL"`
+	CommandKey     string `xml:"CommandKey"`
+	FileType       string `xml:"FileType"` // "1 Firmware Upgrade Image", "3 Vendor Configuration File"
+	URL            string `xml:"URL"`
+	Username       string `xml:"Username"`
+	Password       string `xml:"Password"`
+	FileSize       int64  `xml:"FileSize"`
+	TargetFileName string `xml:"TargetFileName"`
+	DelaySeconds   int    `xml:"DelaySeconds"`
+	SuccessURL     string `xml:"SuccessURL"`
+	FailureURL     string `xml:"FailureURL"`
 }
 
 // DownloadResponse - CPE response
@@ -193,10 +195,3 @@ type FaultStruct struct {
 
 // TransferCompleteResponse
 type TransferCompleteResponse struct{}
-
-// ParameterValue untuk SetParameterValues
-type ParameterValue struct {
-	Name  string `xml:"Name"`
-	Value string `xml:"Value,omitempty"`
-	Type  string `xml:"Type,attr,omitempty"`
-}

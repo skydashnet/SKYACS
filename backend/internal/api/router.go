@@ -1,13 +1,13 @@
 package api
 
 import (
-	"crypto/md5"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/icholy/digest"
 	"github.com/skydashnet/miniacs/internal/auth"
 	"github.com/skydashnet/miniacs/internal/database"
 	"github.com/skydashnet/miniacs/internal/models"
@@ -29,6 +28,7 @@ import (
 )
 
 type Router struct {
+	db               *gorm.DB
 	deviceRepo       *database.DeviceRepository
 	settingsRepo     *database.SettingsRepository
 	taskRepo         *database.TaskRepository
@@ -40,7 +40,9 @@ type Router struct {
 	auditRepo        *database.AuditRepository
 	blockedRepo      *database.BlockedDeviceRepository
 	loginLimiter     *loginLimiter
+	downloadLimiter  *loginLimiter
 	uploadDir        string
+	uploadInitErr    error
 }
 
 func NewRouter(db *gorm.DB) *Router {
@@ -48,11 +50,24 @@ func NewRouter(db *gorm.DB) *Router {
 	if uploadDir == "" {
 		uploadDir = "./uploads/firmware"
 	}
-	if err := os.MkdirAll(uploadDir, 0750); err != nil {
-		log.Printf("Warning: cannot create firmware upload directory: %v", err)
+	uploadInitErr := os.MkdirAll(uploadDir, 0750)
+	if uploadInitErr == nil {
+		var probe *os.File
+		probe, uploadInitErr = os.CreateTemp(uploadDir, ".write-probe-*")
+		if uploadInitErr == nil {
+			probeName := probe.Name()
+			uploadInitErr = probe.Close()
+			if removeErr := os.Remove(probeName); uploadInitErr == nil {
+				uploadInitErr = removeErr
+			}
+		}
+	}
+	if uploadInitErr != nil {
+		log.Printf("Firmware storage is not writable: %v", uploadInitErr)
 	}
 
 	return &Router{
+		db:               db,
 		deviceRepo:       database.NewDeviceRepository(db),
 		settingsRepo:     database.NewSettingsRepository(db),
 		taskRepo:         database.NewTaskRepository(db),
@@ -64,7 +79,9 @@ func NewRouter(db *gorm.DB) *Router {
 		auditRepo:        database.NewAuditRepository(db),
 		blockedRepo:      database.NewBlockedDeviceRepository(db),
 		loginLimiter:     newLoginLimiter(5, 15*time.Minute),
+		downloadLimiter:  newLoginLimiter(60, time.Minute),
 		uploadDir:        uploadDir,
+		uploadInitErr:    uploadInitErr,
 	}
 }
 
@@ -148,12 +165,27 @@ func (r *Router) Handler() http.Handler {
 	apiMux.HandleFunc("DELETE /blocked-devices/{serial}", auth.RequireFullAccess(r.handleRemoveBlockedDevice))
 
 	// Authentication precedes the audit logger so actor details are available.
-	mux.Handle("/", auth.AuthMiddleware(auditMiddleware(r.auditRepo, apiMux)))
+	mux.Handle("/", auth.AuthMiddleware(r.userRepo, auditMiddleware(r.auditRepo, apiMux)))
 
 	return securityHeaders(corsMiddleware(requestBodyLimit(mux)))
 }
 
 func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
+	if r.uploadInitErr != nil {
+		respondError(w, http.StatusServiceUnavailable, "firmware storage unavailable")
+		return
+	}
+	sqlDB, err := r.db.DB()
+	if err != nil {
+		respondError(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		respondError(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -238,8 +270,7 @@ func (r *Router) handleDeviceStats(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleDeviceAnalytics(w http.ResponseWriter, req *http.Request) {
-	// Get all devices
-	devices, _, err := r.deviceRepo.List(req.Context(), 1000, 0)
+	devices, totalDevices, err := r.deviceRepo.ListForAnalytics(req.Context(), 10000)
 	if err != nil {
 		log.Printf("Error getting devices for analytics: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to get analytics")
@@ -292,10 +323,24 @@ func (r *Router) handleDeviceAnalytics(w http.ResponseWriter, req *http.Request)
 		"6-10 Stations": 0,
 		"10+ Stations":  0,
 	}
+	manufacturers := make(map[string]int)
+	productClasses := make(map[string]int)
 
 	now := time.Now()
 
 	for _, device := range devices {
+		manufacturer := "Unknown"
+		if device.Manufacturer != nil && strings.TrimSpace(*device.Manufacturer) != "" {
+			manufacturer = *device.Manufacturer
+		}
+		manufacturers[manufacturer]++
+		productClass := "Unknown"
+		if device.ProductClass != nil && strings.TrimSpace(*device.ProductClass) != "" {
+			productClass = *device.ProductClass
+		} else if device.ModelName != nil && strings.TrimSpace(*device.ModelName) != "" {
+			productClass = *device.ModelName
+		}
+		productClasses[productClass]++
 		if device.LastInform != nil {
 			diff := now.Sub(*device.LastInform)
 			if diff < 5*time.Minute {
@@ -317,18 +362,13 @@ func (r *Router) handleDeviceAnalytics(w http.ResponseWriter, req *http.Request)
 			lastInformRanges["Offline >30d"]++
 		}
 
-		params, err := r.parameterRepo.GetByDeviceID(req.Context(), device.ID)
-		if err != nil {
-			continue
-		}
-
 		var deviceRxPower float64 = -999
 		var deviceTemp float64 = -999
 		var deviceUptime float64 = -1
 		var deviceAccessType string
 		totalStations := 0
 
-		for _, p := range params {
+		for _, p := range device.Parameters {
 			// RX Power - ambil nilai pertama yang valid
 			if deviceRxPower == -999 && (strings.Contains(p.Name, "RXPower") || strings.Contains(p.Name, "RxPower")) {
 				if val, err := strconv.ParseFloat(p.Value, 64); err == nil {
@@ -448,12 +488,16 @@ func (r *Router) handleDeviceAnalytics(w http.ResponseWriter, req *http.Request)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"rxPower":      rxPowerRanges,
-		"temperature":  tempRanges,
-		"uptime":       uptimeRanges,
-		"accessType":   accessTypes,
-		"lastInform":   lastInformRanges,
-		"wifiStations": wifiStationsRanges,
+		"rxPower":        rxPowerRanges,
+		"temperature":    tempRanges,
+		"uptime":         uptimeRanges,
+		"accessType":     accessTypes,
+		"lastInform":     lastInformRanges,
+		"wifiStations":   wifiStationsRanges,
+		"manufacturers":  manufacturers,
+		"productClasses": productClasses,
+		"sampled":        len(devices),
+		"total":          totalDevices,
 	})
 }
 
@@ -470,6 +514,7 @@ func (r *Router) handleGetDeviceParameters(w http.ResponseWriter, req *http.Requ
 		respondError(w, http.StatusInternalServerError, "Failed to get parameters")
 		return
 	}
+	redactSensitiveParameters(req, params)
 
 	respondJSON(w, http.StatusOK, params)
 }
@@ -510,6 +555,10 @@ func (r *Router) handleGetParameterValues(w http.ResponseWriter, req *http.Reque
 		respondError(w, http.StatusBadRequest, "No parameters specified")
 		return
 	}
+	if err := validateParameterNames(payload.Parameters); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	task, err := models.NewTaskWithPayload(id, models.TaskTypeGetParameterValues, payload.Parameters)
 	if err != nil {
@@ -544,6 +593,14 @@ func (r *Router) handleSetParameterValues(w http.ResponseWriter, req *http.Reque
 
 	if len(payload.Parameters) == 0 {
 		respondError(w, http.StatusBadRequest, "No parameters specified")
+		return
+	}
+	if err := validateSetParameters(payload.Parameters); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := r.rejectKnownReadOnly(req.Context(), id, payload.Parameters); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -587,6 +644,9 @@ func (r *Router) handleReboot(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleFactoryReset(w http.ResponseWriter, req *http.Request) {
+	if !r.requireCurrentPassword(w, req) {
+		return
+	}
 	id, err := r.parseDeviceID(req)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid device ID")
@@ -609,6 +669,40 @@ func (r *Router) handleFactoryReset(w http.ResponseWriter, req *http.Request) {
 	respondJSON(w, http.StatusCreated, task)
 }
 
+func (r *Router) requireCurrentPassword(w http.ResponseWriter, req *http.Request) bool {
+	key := "reauth:" + clientIP(req)
+	if !r.loginLimiter.Allow(key) {
+		w.Header().Set("Retry-After", "900")
+		respondError(w, http.StatusTooManyRequests, "Too many reauthentication attempts; try again later")
+		return false
+	}
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+	}
+	decoder := json.NewDecoder(req.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil || body.CurrentPassword == "" {
+		respondError(w, http.StatusBadRequest, "Current password is required")
+		return false
+	}
+	claims := auth.GetUserFromContext(req.Context())
+	if claims == nil {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return false
+	}
+	user, err := r.userRepo.GetByID(req.Context(), claims.UserID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to verify current password")
+		return false
+	}
+	if user == nil || !auth.CheckPassword(body.CurrentPassword, user.PasswordHash) {
+		respondError(w, http.StatusForbidden, "Current password is incorrect")
+		return false
+	}
+	r.loginLimiter.Reset(key)
+	return true
+}
+
 func (r *Router) handleConnectionRequest(w http.ResponseWriter, req *http.Request) {
 	id, err := r.parseDeviceID(req)
 	if err != nil {
@@ -621,99 +715,66 @@ func (r *Router) handleConnectionRequest(w http.ResponseWriter, req *http.Reques
 		respondError(w, http.StatusNotFound, "Device not found")
 		return
 	}
+	r.executeConnectionRequest(w, req, device)
+}
 
+func (r *Router) executeConnectionRequest(w http.ResponseWriter, req *http.Request, device *models.Device) {
 	if device.ConnectionRequestURL == nil || *device.ConnectionRequestURL == "" {
 		respondError(w, http.StatusBadRequest, "Device has no connection request URL")
 		return
 	}
-
 	connReqURL := *device.ConnectionRequestURL
-	if err := netutil.ValidateDeviceURL(connReqURL); err != nil {
+	settings, err := r.settingsRepo.GetAll(req.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to load connection request settings")
+		return
+	}
+	username, password, useAuto := "", "", false
+	for _, setting := range settings {
+		switch setting.Key {
+		case "connection_request_username":
+			username = setting.Value
+		case "connection_request_password":
+			password = setting.Value
+		case "use_auto_conn_credentials":
+			useAuto = setting.Value == "true"
+		}
+	}
+	if useAuto {
+		username = device.SerialNumber
+		password, err = netutil.DeriveDevicePassword(device.SerialNumber, password)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	client, err := netutil.NewDeviceHTTPClient(connReqURL, username, password, 10*time.Second)
+	if err != nil {
 		respondError(w, http.StatusBadRequest, "Unsafe connection request URL: "+err.Error())
 		return
 	}
-
-	settings, _ := r.settingsRepo.GetAll(req.Context())
-	connReqUsername := ""
-	connReqPassword := ""
-	useAutoCredentials := false
-	for _, s := range settings {
-		if s.Key == "connection_request_username" {
-			connReqUsername = s.Value
-		}
-		if s.Key == "connection_request_password" {
-			connReqPassword = s.Value
-		}
-		if s.Key == "use_auto_conn_credentials" && s.Value == "true" {
-			useAutoCredentials = true
-		}
-	}
-
-	// Jika mode auto atau credentials kosong, pakai serial number
-	if useAutoCredentials || connReqUsername == "" {
-		connReqUsername = device.SerialNumber
-	}
-	if useAutoCredentials || connReqPassword == "" {
-		connReqPassword = generateGenieACSPassword(device.SerialNumber)
-	}
-
-	log.Printf("[ConnReq] URL: %s, Username: %s, Password length: %d", connReqURL, connReqUsername, len(connReqPassword))
-
-	// Use Digest Transport which handles digest auth challenge-response
-	clientWithAuth := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &digest.Transport{
-			Username: connReqUsername,
-			Password: connReqPassword,
-		},
-	}
-
-	httpReq, err := http.NewRequestWithContext(req.Context(), "GET", connReqURL, nil)
+	httpReq, err := http.NewRequestWithContext(req.Context(), http.MethodGet, connReqURL, nil)
 	if err != nil {
-		log.Printf("Error creating connection request: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to create connection request")
 		return
 	}
-
-	resp, err := clientWithAuth.Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
-		log.Printf("[ConnReq] Request failed: %v", err)
-		respondJSON(w, http.StatusOK, map[string]string{
-			"status":  "failed",
-			"url":     connReqURL,
-			"message": "Device tidak dapat dijangkau: " + err.Error(),
-		})
+		log.Printf("[ConnReq] %s failed: %v", device.SerialNumber, err)
+		respondJSON(w, http.StatusOK, map[string]string{"status": "failed", "url": connReqURL, "message": "Device tidak dapat dijangkau: " + err.Error()})
 		return
 	}
-	resp.Body.Close()
-
-	log.Printf("[ConnReq] Response status: %d", resp.StatusCode)
-
+	defer resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Printf("[ConnReq] Success!")
-		respondJSON(w, http.StatusOK, map[string]string{
-			"status":  "success",
-			"url":     connReqURL,
-			"message": "Device akan mengirim Inform dalam beberapa detik",
-		})
+		respondJSON(w, http.StatusOK, map[string]string{"status": "success", "url": connReqURL, "message": "Device akan mengirim Inform dalam beberapa detik"})
 		return
 	}
-
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		log.Printf("[ConnReq] Auth failed, WWW-Authenticate: %s", resp.Header.Get("WWW-Authenticate"))
-		respondJSON(w, http.StatusOK, map[string]string{
-			"status":  "auth_failed",
-			"url":     connReqURL,
-			"message": "Authentication gagal (401) - " + resp.Header.Get("WWW-Authenticate"),
-		})
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		respondJSON(w, http.StatusOK, map[string]string{"status": "auth_failed", "url": connReqURL, "message": "Connection request credentials were rejected by the device"})
 		return
 	}
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"status":  "unknown",
-		"url":     connReqURL,
-		"message": "Device merespons dengan status " + resp.Status,
-	})
+	respondJSON(w, http.StatusOK, map[string]string{"status": "unknown", "url": connReqURL, "message": "Device merespons dengan status " + resp.Status})
 }
 
 func (r *Router) handleGetSettings(w http.ResponseWriter, req *http.Request) {
@@ -746,8 +807,7 @@ func (r *Router) handleUpdateSettings(w http.ResponseWriter, req *http.Request) 
 	}
 
 	allowed := map[string]bool{
-		"acs_url": true, "firmware_base_url": true, "acs_username": true, "acs_password": true,
-		"inform_interval": true, "connection_request_username": true,
+		"firmware_base_url": true, "connection_request_username": true,
 		"connection_request_password": true, "use_auto_conn_credentials": true,
 	}
 	for key, value := range settings {
@@ -759,25 +819,50 @@ func (r *Router) handleUpdateSettings(w http.ResponseWriter, req *http.Request) 
 			delete(settings, key)
 		}
 	}
-	if interval, ok := settings["inform_interval"]; ok {
-		seconds, err := strconv.Atoi(interval)
-		if err != nil || seconds < 30 || seconds > 604800 {
-			respondError(w, http.StatusBadRequest, "Inform interval must be between 30 and 604800 seconds")
-			return
-		}
-	}
-	for _, key := range []string{"acs_url", "firmware_base_url"} {
+	for _, key := range []string{"firmware_base_url"} {
 		if raw, ok := settings[key]; ok {
-			parsed, err := url.Parse(strings.TrimSpace(raw))
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				settings[key] = ""
+				continue
+			}
+			parsed, err := url.Parse(raw)
 			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 				respondError(w, http.StatusBadRequest, key+" must be an absolute HTTP or HTTPS URL")
 				return
 			}
+			settings[key] = raw
 		}
 	}
 	if value, ok := settings["use_auto_conn_credentials"]; ok && value != "true" && value != "false" {
 		respondError(w, http.StatusBadRequest, "use_auto_conn_credentials must be true or false")
 		return
+	}
+	autoCredentials := settings["use_auto_conn_credentials"] == "true"
+	if _, supplied := settings["use_auto_conn_credentials"]; !supplied {
+		current, err := r.settingsRepo.Get(req.Context(), "use_auto_conn_credentials")
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to validate connection request mode")
+			return
+		}
+		autoCredentials = current != nil && current.Value == "true"
+	}
+	if autoCredentials {
+		masterSecret := settings["connection_request_password"]
+		if masterSecret == "" {
+			current, err := r.settingsRepo.Get(req.Context(), "connection_request_password")
+			if err != nil {
+				respondError(w, http.StatusInternalServerError, "Failed to validate connection request secret")
+				return
+			}
+			if current != nil {
+				masterSecret = current.Value
+			}
+		}
+		if len(masterSecret) < 16 {
+			respondError(w, http.StatusBadRequest, "Auto credentials require a connection request master secret of at least 16 characters")
+			return
+		}
 	}
 
 	if err := r.settingsRepo.SetMultiple(req.Context(), settings); err != nil {
@@ -790,7 +875,7 @@ func (r *Router) handleUpdateSettings(w http.ResponseWriter, req *http.Request) 
 }
 
 func isSecretSetting(key string) bool {
-	return key == "acs_password" || key == "connection_request_password"
+	return key == "connection_request_password"
 }
 
 func (r *Router) handleListFirmwares(w http.ResponseWriter, req *http.Request) {
@@ -816,16 +901,35 @@ func (r *Router) handleUploadFirmware(w http.ResponseWriter, req *http.Request) 
 	}
 	defer file.Close()
 
-	extension := strings.ToLower(filepath.Ext(filepath.Base(header.Filename)))
+	originalFilename := filepath.Base(header.Filename)
+	if originalFilename == "." || len(originalFilename) > 255 || strings.ContainsAny(originalFilename, "\r\n\x00") {
+		respondError(w, http.StatusBadRequest, "Invalid firmware filename")
+		return
+	}
+	extension := strings.ToLower(filepath.Ext(originalFilename))
 	allowedExtensions := map[string]bool{".bin": true, ".img": true, ".tar": true, ".gz": true, ".zip": true}
 	if !allowedExtensions[extension] {
 		respondError(w, http.StatusBadRequest, "Unsupported firmware file type")
 		return
 	}
 	version := strings.TrimSpace(req.FormValue("version"))
-	if version == "" || len(version) > 128 {
+	if version == "" || len(version) > 128 || strings.ContainsAny(version, "\r\n\x00") {
 		respondError(w, http.StatusBadRequest, "Firmware version is required and must be under 128 characters")
 		return
+	}
+	manufacturer := strings.TrimSpace(req.FormValue("manufacturer"))
+	productClass := strings.TrimSpace(req.FormValue("product_class"))
+	if manufacturer == "" || productClass == "" || len(manufacturer) > 128 || len(productClass) > 128 || strings.ContainsAny(manufacturer+productClass, "\r\n\x00") {
+		respondError(w, http.StatusBadRequest, "Firmware manufacturer and product class are required and must be under 128 characters")
+		return
+	}
+	var description *string
+	if value := strings.TrimSpace(req.FormValue("description")); value != "" {
+		if len(value) > 2048 || strings.ContainsRune(value, '\x00') {
+			respondError(w, http.StatusBadRequest, "Firmware description is invalid or exceeds 2048 characters")
+			return
+		}
+		description = &value
 	}
 
 	tempFile, err := os.CreateTemp(r.uploadDir, ".firmware-*")
@@ -846,7 +950,7 @@ func (r *Router) handleUploadFirmware(w http.ResponseWriter, req *http.Request) 
 	checksum := hex.EncodeToString(hash.Sum(nil))
 	filename := strconv.FormatInt(time.Now().UnixNano(), 10) + extension
 	filePath := filepath.Join(r.uploadDir, filename)
-	if err := os.Chmod(tempPath, 0640); err != nil {
+	if err := os.Chmod(tempPath, 0600); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to secure firmware file")
 		return
 	}
@@ -855,34 +959,22 @@ func (r *Router) handleUploadFirmware(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	// Save to database
-	downloadToken, err := newFirmwareToken()
-	if err != nil {
-		os.Remove(filePath)
-		respondError(w, http.StatusInternalServerError, "Failed to secure firmware download")
-		return
-	}
 	fw := &models.Firmware{
-		Filename:      filepath.Base(header.Filename),
-		Version:       version,
-		FileSize:      written,
-		FilePath:      filePath,
-		Checksum:      &checksum,
-		DownloadToken: downloadToken,
-	}
-	if m := req.FormValue("manufacturer"); m != "" {
-		fw.Manufacturer = &m
-	}
-	if p := req.FormValue("product_class"); p != "" {
-		fw.ProductClass = &p
-	}
-	if d := req.FormValue("description"); d != "" {
-		fw.Description = &d
+		Filename:     originalFilename,
+		Version:      version,
+		FileSize:     written,
+		FilePath:     filePath,
+		Checksum:     &checksum,
+		Manufacturer: &manufacturer,
+		ProductClass: &productClass,
+		Description:  description,
 	}
 
 	if err := r.firmwareRepo.Create(req.Context(), fw); err != nil {
 		log.Printf("Error saving firmware: %v", err)
-		os.Remove(filePath)
+		if removeErr := os.Remove(filePath); removeErr != nil {
+			log.Printf("Failed to remove orphaned firmware file %s: %v", filePath, removeErr)
+		}
 		respondError(w, http.StatusInternalServerError, "Failed to save firmware")
 		return
 	}
@@ -907,13 +999,45 @@ func (r *Router) handleDeleteFirmware(w http.ResponseWriter, req *http.Request) 
 		respondError(w, http.StatusNotFound, "Firmware not found")
 		return
 	}
-
-	if err := r.firmwareRepo.Delete(req.Context(), id); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to delete firmware")
+	activeTasks, err := r.taskRepo.CountActiveFirmwareTasks(req.Context(), id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to check active firmware tasks")
 		return
 	}
-	if err := os.Remove(fw.FilePath); err != nil && !os.IsNotExist(err) {
-		log.Printf("Warning: failed to remove firmware file %s: %v", fw.FilePath, err)
+	if activeTasks > 0 {
+		respondError(w, http.StatusConflict, "Firmware has active download tasks and cannot be deleted")
+		return
+	}
+
+	quarantinePath := ""
+	if _, statErr := os.Stat(fw.FilePath); statErr == nil {
+		suffix, tokenErr := newFirmwareToken()
+		if tokenErr != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to prepare firmware deletion")
+			return
+		}
+		quarantinePath = fw.FilePath + ".deleting-" + suffix[:16]
+		if err := os.Rename(fw.FilePath, quarantinePath); err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to quarantine firmware file")
+			return
+		}
+	} else if !os.IsNotExist(statErr) {
+		respondError(w, http.StatusInternalServerError, "Failed to inspect firmware file")
+		return
+	}
+	if err := r.firmwareRepo.Delete(req.Context(), id); err != nil {
+		if quarantinePath != "" {
+			if restoreErr := os.Rename(quarantinePath, fw.FilePath); restoreErr != nil {
+				log.Printf("Failed to restore firmware after database deletion error: %v", restoreErr)
+			}
+		}
+		respondError(w, http.StatusInternalServerError, "Failed to delete firmware record")
+		return
+	}
+	if quarantinePath != "" {
+		if err := os.Remove(quarantinePath); err != nil {
+			log.Printf("Failed to remove quarantined firmware file %s: %v", quarantinePath, err)
+		}
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -928,15 +1052,24 @@ func newFirmwareToken() (string, error) {
 }
 
 func (r *Router) firmwareDownloadURL(req *http.Request, fw *models.Firmware) (string, error) {
+	minimumExpiry := time.Now().Add(24 * time.Hour)
 	if fw.DownloadToken == "" {
 		token, err := newFirmwareToken()
 		if err != nil {
 			return "", fmt.Errorf("failed to secure firmware download")
 		}
-		if err := r.firmwareRepo.UpdateDownloadToken(req.Context(), fw.ID, token); err != nil {
+		if err := r.firmwareRepo.UpdateDownloadToken(req.Context(), fw.ID, token, minimumExpiry); err != nil {
 			return "", fmt.Errorf("failed to persist firmware download token")
 		}
 		fw.DownloadToken = token
+		fw.TokenExpiresAt = &minimumExpiry
+	} else if fw.TokenExpiresAt == nil || fw.TokenExpiresAt.Before(minimumExpiry) {
+		// Extend the existing grant instead of rotating it: rotation would break
+		// download tasks already queued for offline devices.
+		if err := r.firmwareRepo.UpdateDownloadToken(req.Context(), fw.ID, fw.DownloadToken, minimumExpiry); err != nil {
+			return "", fmt.Errorf("failed to extend firmware download token")
+		}
+		fw.TokenExpiresAt = &minimumExpiry
 	}
 
 	setting, err := r.settingsRepo.Get(req.Context(), "firmware_base_url")
@@ -948,18 +1081,26 @@ func (r *Router) firmwareDownloadURL(req *http.Request, fw *models.Firmware) (st
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return "", fmt.Errorf("firmware_base_url must be an absolute HTTP or HTTPS URL")
 	}
+	if parsed.Scheme != "https" && os.Getenv("ALLOW_INSECURE_FIRMWARE_URL") != "true" {
+		return "", fmt.Errorf("firmware_base_url must use HTTPS")
+	}
 
 	return fmt.Sprintf("%s/files/%d/%s?token=%s", baseURL, fw.ID, url.PathEscape(fw.Filename), url.QueryEscape(fw.DownloadToken)), nil
 }
 
 func (r *Router) handleFirmwareFile(w http.ResponseWriter, req *http.Request) {
+	if !r.downloadLimiter.Allow(clientIP(req)) {
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, "Too many download requests", http.StatusTooManyRequests)
+		return
+	}
 	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
 	if err != nil {
 		http.NotFound(w, req)
 		return
 	}
 	fw, err := r.firmwareRepo.GetByID(req.Context(), id)
-	if err != nil || fw == nil || fw.DownloadToken == "" || req.PathValue("filename") != fw.Filename {
+	if err != nil || fw == nil || fw.DownloadToken == "" || fw.TokenExpiresAt == nil || time.Now().After(*fw.TokenExpiresAt) || req.PathValue("filename") != fw.Filename {
 		http.NotFound(w, req)
 		return
 	}
@@ -1011,6 +1152,15 @@ func (r *Router) handleDownloadFirmware(w http.ResponseWriter, req *http.Request
 		respondError(w, http.StatusNotFound, "Firmware not found")
 		return
 	}
+	device, err := r.deviceRepo.GetByID(req.Context(), deviceID)
+	if err != nil || device == nil {
+		respondError(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if err := validateFirmwareCompatibility(device, fw); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	downloadURL, err := r.firmwareDownloadURL(req, fw)
 	if err != nil {
@@ -1022,8 +1172,13 @@ func (r *Router) handleDownloadFirmware(w http.ResponseWriter, req *http.Request
 	if fileType == "" {
 		fileType = "1 Firmware Upgrade Image"
 	}
+	if err := validateFirmwareFileType(fileType); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	task, err := models.NewTaskWithPayload(deviceID, models.TaskTypeDownload, map[string]interface{}{
+		"firmware_id":     fw.ID,
 		"file_type":       fileType,
 		"url":             downloadURL,
 		"file_size":       fw.FileSize,
@@ -1046,6 +1201,57 @@ func (r *Router) handleDownloadFirmware(w http.ResponseWriter, req *http.Request
 func (r *Router) parseDeviceID(req *http.Request) (int64, error) {
 	idStr := req.PathValue("id")
 	return strconv.ParseInt(idStr, 10, 64)
+}
+
+func validateParameterNames(names []string) error {
+	if len(names) > 100 {
+		return errors.New("a maximum of 100 parameters can be requested per task")
+	}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || len(name) > 512 || (!strings.HasPrefix(name, "Device.") && !strings.HasPrefix(name, "InternetGatewayDevice.")) {
+			return fmt.Errorf("invalid parameter name %q", name)
+		}
+	}
+	return nil
+}
+
+func validateSetParameters(parameters map[string]string) error {
+	if len(parameters) > 100 {
+		return errors.New("a maximum of 100 parameters can be changed per task")
+	}
+	names := make([]string, 0, len(parameters))
+	for name, value := range parameters {
+		names = append(names, name)
+		if len(value) > 4096 {
+			return fmt.Errorf("value for %q exceeds 4096 bytes", name)
+		}
+	}
+	return validateParameterNames(names)
+}
+
+func (r *Router) rejectKnownReadOnly(ctx context.Context, deviceID int64, parameters map[string]string) error {
+	names := make([]string, 0, len(parameters))
+	for name := range parameters {
+		names = append(names, name)
+	}
+	readOnly, err := r.parameterRepo.KnownReadOnly(ctx, deviceID, names)
+	if err != nil {
+		return errors.New("could not verify parameter write access")
+	}
+	if len(readOnly) > 0 {
+		return fmt.Errorf("parameter is reported read-only by the CPE: %s", strings.Join(readOnly, ", "))
+	}
+	return nil
+}
+
+func validateFirmwareFileType(fileType string) error {
+	switch fileType {
+	case "1 Firmware Upgrade Image", "3 Vendor Configuration File":
+		return nil
+	default:
+		return errors.New("unsupported firmware file type")
+	}
 }
 
 func (r *Router) parseDeviceBySerial(req *http.Request) (*models.Device, error) {
@@ -1094,7 +1300,20 @@ func (r *Router) handleGetDeviceParametersBySerial(w http.ResponseWriter, req *h
 		respondError(w, http.StatusInternalServerError, "Failed to get parameters")
 		return
 	}
+	redactSensitiveParameters(req, params)
 	respondJSON(w, http.StatusOK, params)
+}
+
+func redactSensitiveParameters(req *http.Request, params []models.DeviceParameter) {
+	claims := auth.GetUserFromContext(req.Context())
+	if claims != nil && claims.Role == models.RoleFull {
+		return
+	}
+	for index := range params {
+		if database.IsSensitiveParameterName(params[index].Name) {
+			params[index].Value = "[REDACTED]"
+		}
+	}
 }
 
 func (r *Router) handleGetDeviceTasksBySerial(w http.ResponseWriter, req *http.Request) {
@@ -1128,6 +1347,10 @@ func (r *Router) handleGetParameterValuesBySerial(w http.ResponseWriter, req *ht
 		respondError(w, http.StatusBadRequest, "No parameters specified")
 		return
 	}
+	if err := validateParameterNames(payload.Parameters); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	task, err := models.NewTaskWithPayload(device.ID, models.TaskTypeGetParameterValues, payload.Parameters)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create task")
@@ -1155,6 +1378,14 @@ func (r *Router) handleSetParameterValuesBySerial(w http.ResponseWriter, req *ht
 	}
 	if len(payload.Parameters) == 0 {
 		respondError(w, http.StatusBadRequest, "No parameters specified")
+		return
+	}
+	if err := validateSetParameters(payload.Parameters); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := r.rejectKnownReadOnly(req.Context(), device.ID, payload.Parameters); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	task, err := models.NewTaskWithPayload(device.ID, models.TaskTypeSetParameterValues, payload.Parameters)
@@ -1188,6 +1419,9 @@ func (r *Router) handleRebootBySerial(w http.ResponseWriter, req *http.Request) 
 }
 
 func (r *Router) handleFactoryResetBySerial(w http.ResponseWriter, req *http.Request) {
+	if !r.requireCurrentPassword(w, req) {
+		return
+	}
 	device, err := r.parseDeviceBySerial(req)
 	if err != nil || device == nil {
 		respondError(w, http.StatusNotFound, "Device not found")
@@ -1211,79 +1445,7 @@ func (r *Router) handleConnectionRequestBySerial(w http.ResponseWriter, req *htt
 		respondError(w, http.StatusNotFound, "Device not found")
 		return
 	}
-	if device.ConnectionRequestURL == nil || *device.ConnectionRequestURL == "" {
-		respondError(w, http.StatusBadRequest, "Device has no connection request URL")
-		return
-	}
-
-	connReqURL := *device.ConnectionRequestURL
-	if err := netutil.ValidateDeviceURL(connReqURL); err != nil {
-		respondError(w, http.StatusBadRequest, "Unsafe connection request URL: "+err.Error())
-		return
-	}
-
-	settings, _ := r.settingsRepo.GetAll(req.Context())
-	connReqUsername := ""
-	connReqPassword := ""
-	useAutoCredentials := false
-	for _, s := range settings {
-		if s.Key == "connection_request_username" {
-			connReqUsername = s.Value
-		}
-		if s.Key == "connection_request_password" {
-			connReqPassword = s.Value
-		}
-		if s.Key == "use_auto_conn_credentials" && s.Value == "true" {
-			useAutoCredentials = true
-		}
-	}
-
-	// Jika mode auto atau credentials kosong, pakai serial number
-	if useAutoCredentials || connReqUsername == "" {
-		connReqUsername = device.SerialNumber
-	}
-	if useAutoCredentials || connReqPassword == "" {
-		connReqPassword = generateGenieACSPassword(device.SerialNumber)
-	}
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &digest.Transport{
-			Username: connReqUsername,
-			Password: connReqPassword,
-		},
-	}
-	httpReq, err := http.NewRequestWithContext(req.Context(), "GET", connReqURL, nil)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to create connection request")
-		return
-	}
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		respondJSON(w, http.StatusOK, map[string]string{
-			"status":  "failed",
-			"url":     connReqURL,
-			"message": "Device tidak dapat dijangkau: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		respondJSON(w, http.StatusOK, map[string]string{
-			"status":  "success",
-			"url":     connReqURL,
-			"message": "Device akan mengirim Inform dalam beberapa detik",
-		})
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"status":  "unknown",
-		"url":     connReqURL,
-		"message": "Device merespons dengan status " + resp.Status,
-	})
+	r.executeConnectionRequest(w, req, device)
 }
 
 func (r *Router) handleDownloadFirmwareBySerial(w http.ResponseWriter, req *http.Request) {
@@ -1305,6 +1467,10 @@ func (r *Router) handleDownloadFirmwareBySerial(w http.ResponseWriter, req *http
 		respondError(w, http.StatusNotFound, "Firmware not found")
 		return
 	}
+	if err := validateFirmwareCompatibility(device, fw); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	downloadURL, err := r.firmwareDownloadURL(req, fw)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
@@ -1314,7 +1480,12 @@ func (r *Router) handleDownloadFirmwareBySerial(w http.ResponseWriter, req *http
 	if fileType == "" {
 		fileType = "1 Firmware Upgrade Image"
 	}
+	if err := validateFirmwareFileType(fileType); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	task, err := models.NewTaskWithPayload(device.ID, models.TaskTypeDownload, map[string]interface{}{
+		"firmware_id":     fw.ID,
 		"file_type":       fileType,
 		"url":             downloadURL,
 		"file_size":       fw.FileSize,
@@ -1330,6 +1501,20 @@ func (r *Router) handleDownloadFirmwareBySerial(w http.ResponseWriter, req *http
 		return
 	}
 	respondJSON(w, http.StatusCreated, task)
+}
+
+func validateFirmwareCompatibility(device *models.Device, firmware *models.Firmware) error {
+	if firmware.Manufacturer == nil || strings.TrimSpace(*firmware.Manufacturer) == "" ||
+		firmware.ProductClass == nil || strings.TrimSpace(*firmware.ProductClass) == "" {
+		return errors.New("firmware manufacturer and product class are required before scheduling an upgrade")
+	}
+	if device.Manufacturer == nil || !strings.EqualFold(strings.TrimSpace(*device.Manufacturer), strings.TrimSpace(*firmware.Manufacturer)) {
+		return errors.New("firmware manufacturer does not match device")
+	}
+	if device.ProductClass == nil || !strings.EqualFold(strings.TrimSpace(*device.ProductClass), strings.TrimSpace(*firmware.ProductClass)) {
+		return errors.New("firmware product class does not match device")
+	}
+	return nil
 }
 
 // Fault handlers
@@ -1416,7 +1601,9 @@ func (r *Router) handleDeleteFault(w http.ResponseWriter, req *http.Request) {
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("Failed to encode HTTP response: %v", err)
+	}
 }
 
 func respondError(w http.ResponseWriter, status int, message string) {
@@ -1468,7 +1655,9 @@ func (r *Router) handleLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	r.userRepo.UpdateLastLogin(req.Context(), user.ID)
+	if err := r.userRepo.UpdateLastLogin(req.Context(), user.ID); err != nil {
+		log.Printf("Failed to record last login for user %d: %v", user.ID, err)
+	}
 	r.loginLimiter.Reset(ip)
 	r.recordLoginAudit(req, user.Username, http.StatusOK)
 
@@ -1490,7 +1679,9 @@ func (r *Router) recordLoginAudit(req *http.Request, username string, status int
 	if user, err := r.userRepo.GetByUsername(req.Context(), username); err == nil && user != nil {
 		entry.UserID = &user.ID
 	}
-	_ = r.auditRepo.Create(req.Context(), entry)
+	if err := r.auditRepo.Create(req.Context(), entry); err != nil {
+		log.Printf("Failed to record login audit event: %v", err)
+	}
 }
 
 func (r *Router) handleAuthMe(w http.ResponseWriter, req *http.Request) {
@@ -1520,7 +1711,9 @@ func (r *Router) handleChangePassword(w http.ResponseWriter, req *http.Request) 
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+	decoder := json.NewDecoder(req.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -1531,13 +1724,13 @@ func (r *Router) handleChangePassword(w http.ResponseWriter, req *http.Request) 
 	}
 
 	user, err := r.userRepo.GetByID(req.Context(), claims.UserID)
-	if err != nil {
+	if err != nil || user == nil {
 		respondError(w, http.StatusNotFound, "User not found")
 		return
 	}
 
 	if !auth.CheckPassword(body.CurrentPassword, user.PasswordHash) {
-		respondError(w, http.StatusUnauthorized, "Current password is incorrect")
+		respondError(w, http.StatusForbidden, "Current password is incorrect")
 		return
 	}
 	if auth.CheckPassword(body.NewPassword, user.PasswordHash) {
@@ -1651,6 +1844,18 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 		respondError(w, http.StatusNotFound, "User not found")
 		return
 	}
+	var passwordHash string
+	if body.Password != "" {
+		if err := auth.ValidatePassword(body.Password); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		passwordHash, err = auth.HashPassword(body.Password)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to hash password")
+			return
+		}
+	}
 
 	if body.Username != "" {
 		body.Username = strings.TrimSpace(body.Username)
@@ -1675,25 +1880,17 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 		user.Role = body.Role
 	}
 
-	if err := r.userRepo.Update(req.Context(), id, user.Username, user.Role); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to update user")
-		return
-	}
-
-	if body.Password != "" {
-		if err := auth.ValidatePassword(body.Password); err != nil {
+	if err := r.userRepo.UpdateAccount(req.Context(), id, user.Username, user.Role, passwordHash); err != nil {
+		if errors.Is(err, database.ErrLastFullAdmin) {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		hash, err := auth.HashPassword(body.Password)
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to hash password")
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			respondError(w, http.StatusConflict, "Username already exists")
 			return
 		}
-		if err := r.userRepo.UpdatePassword(req.Context(), id, hash); err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to update password")
-			return
-		}
+		respondError(w, http.StatusInternalServerError, "Failed to update user")
+		return
 	}
 
 	respondJSON(w, http.StatusOK, user)
@@ -1723,20 +1920,11 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 		respondError(w, http.StatusNotFound, "User not found")
 		return
 	}
-	if user.Role == models.RoleFull {
-		fullAdmins, countErr := r.userRepo.CountByRole(req.Context(), models.RoleFull)
-		if countErr != nil || fullAdmins <= 1 {
-			respondError(w, http.StatusBadRequest, "Cannot delete the last full-access administrator")
+	if err := r.userRepo.DeleteSafely(req.Context(), id); err != nil {
+		if errors.Is(err, database.ErrLastFullAdmin) || errors.Is(err, database.ErrLastUser) {
+			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-	}
-	count, countErr := r.userRepo.Count(req.Context())
-	if countErr != nil || count <= 1 {
-		respondError(w, http.StatusBadRequest, "Cannot delete the last user")
-		return
-	}
-
-	if err := r.userRepo.Delete(req.Context(), id); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to delete user")
 		return
 	}
@@ -1750,6 +1938,14 @@ func (r *Router) handleListProvisioningRules(w http.ResponseWriter, req *http.Re
 		respondError(w, http.StatusInternalServerError, "Failed to list provisioning rules")
 		return
 	}
+	claims := auth.GetUserFromContext(req.Context())
+	if claims == nil || claims.Role != models.RoleFull {
+		for _, rule := range rules {
+			if database.IsSensitiveParameterName(rule.ParameterName) {
+				rule.ParameterValue = "[REDACTED]"
+			}
+		}
+	}
 	respondJSON(w, http.StatusOK, rules)
 }
 
@@ -1761,13 +1957,15 @@ func (r *Router) handleCreateProvisioningRule(w http.ResponseWriter, req *http.R
 	}
 
 	var body models.CreateProvisioningRuleRequest
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+	decoder := json.NewDecoder(req.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	if body.ParameterName == "" || body.ParameterValue == "" {
-		respondError(w, http.StatusBadRequest, "Parameter name and value required")
+	if err := validateProvisioningRule(body.ParameterName, body.ParameterValue, body.ParameterType, body.Manufacturer, body.ProductClass, body.Description); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1779,6 +1977,8 @@ func (r *Router) handleCreateProvisioningRule(w http.ResponseWriter, req *http.R
 		ParameterName:  body.ParameterName,
 		ParameterValue: body.ParameterValue,
 		ParameterType:  body.ParameterType,
+		Manufacturer:   strings.TrimSpace(body.Manufacturer),
+		ProductClass:   strings.TrimSpace(body.ProductClass),
 		Enabled:        body.Enabled,
 		Description:    body.Description,
 	}
@@ -1806,8 +2006,14 @@ func (r *Router) handleUpdateProvisioningRule(w http.ResponseWriter, req *http.R
 	}
 
 	var body models.ProvisioningRule
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+	decoder := json.NewDecoder(req.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if err := validateProvisioningRule(body.ParameterName, body.ParameterValue, body.ParameterType, body.Manufacturer, body.ProductClass, body.Description); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1818,6 +2024,27 @@ func (r *Router) handleUpdateProvisioningRule(w http.ResponseWriter, req *http.R
 	}
 
 	respondJSON(w, http.StatusOK, body)
+}
+
+func validateProvisioningRule(name, value, valueType, manufacturer, productClass, description string) error {
+	if err := validateParameterNames([]string{name}); err != nil {
+		return err
+	}
+	if len(value) > 4096 {
+		return errors.New("provisioning value exceeds 4096 bytes")
+	}
+	switch valueType {
+	case "", "string", "boolean", "int", "unsignedInt", "long", "unsignedLong", "dateTime", "base64", "hexBinary":
+	default:
+		return errors.New("unsupported CWMP parameter type")
+	}
+	if len(manufacturer) > 128 || len(productClass) > 128 {
+		return errors.New("provisioning scope exceeds 128 characters")
+	}
+	if len(description) > 2048 || strings.ContainsRune(description, '\x00') {
+		return errors.New("provisioning description is invalid or exceeds 2048 characters")
+	}
+	return nil
 }
 
 func (r *Router) handleDeleteProvisioningRule(w http.ResponseWriter, req *http.Request) {
@@ -1870,12 +2097,4 @@ func (r *Router) handleToggleProvisioningRule(w http.ResponseWriter, req *http.R
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "toggled"})
-}
-
-func generateGenieACSPassword(serialNumber string) string {
-	hash := md5.Sum([]byte(serialNumber))
-	seed := binary.BigEndian.Uint64(hash[:8])
-	maxSafeInt := uint64(9007199254740991)
-	value := seed % maxSafeInt
-	return strconv.FormatUint(value, 36)
 }

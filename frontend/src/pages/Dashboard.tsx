@@ -8,7 +8,6 @@ import type { ApexOptions } from 'apexcharts';
 
 const Dashboard: Component = () => {
   const [stats] = createResource(() => api.getDeviceStats());
-  const [deviceList] = createResource(() => api.getDevices(100, 0));
   const [analytics] = createResource(() => api.getDeviceAnalytics());
   const { isDark } = useTheme();
 
@@ -93,23 +92,16 @@ const Dashboard: Component = () => {
     return { labels: Object.keys(data), series: Object.values(data) as number[] };
   });
 
-  const manufacturerData = createMemo(() => {
-    const devices = deviceList()?.devices ?? [];
-    const counts: Record<string, number> = {};
-    devices.forEach(d => { counts[d.manufacturer || 'Unknown'] = (counts[d.manufacturer || 'Unknown'] || 0) + 1; });
+	const manufacturerData = createMemo(() => {
+		const counts = analytics()?.manufacturers ?? {};
     return { labels: Object.keys(counts), series: Object.values(counts) };
   });
 
   // ============================================
   // SECTION 5: Product Class (Horizontal Bar)
   // ============================================
-  const productClassData = createMemo(() => {
-    const devices = deviceList()?.devices ?? [];
-    const counts: Record<string, number> = {};
-    devices.forEach(d => {
-      const pc = d.product_class || d.model_name || 'Unknown';
-      counts[pc] = (counts[pc] || 0) + 1;
-    });
+	const productClassData = createMemo(() => {
+		const counts = analytics()?.productClasses ?? {};
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
     return { labels: sorted.map(e => e[0]), series: [{ data: sorted.map(e => e[1]) }] };
   });
@@ -137,6 +129,11 @@ const Dashboard: Component = () => {
         <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Fleet telemetry</p><h2 class="text-xl font-semibold tracking-[-.02em] mt-1">Network overview</h2><p class="text-xs text-muted mt-1">Operational status across every managed CPE.</p></div>
         <div class="hidden sm:flex items-center gap-2 text-[10px] text-muted"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500" />Live database view</div>
       </div>
+	  <Show when={(analytics()?.total ?? 0) > (analytics()?.sampled ?? 0)}>
+		<div class="card px-4 py-3 border-amber-500/30 text-amber-400 text-xs">
+		  Analytics charts use the most recent {analytics()?.sampled.toLocaleString()} of {analytics()?.total.toLocaleString()} devices; fleet totals remain exact.
+		</div>
+	  </Show>
       <Show when={!stats.error} fallback={<div class="card p-4 border-red-500/30 text-red-400 text-xs">Unable to load fleet telemetry. Verify the API and database connection.</div>}>
       {/* ==================== ROW 1: Hero Stats ==================== */}
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"time"
 
 	"github.com/skydashnet/miniacs/internal/models"
 	"gorm.io/gorm"
@@ -41,6 +42,9 @@ func (r *FirmwareRepository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Delete(&models.Firmware{}, id).Error
 }
 
-func (r *FirmwareRepository) UpdateDownloadToken(ctx context.Context, id int64, token string) error {
-	return r.db.WithContext(ctx).Model(&models.Firmware{}).Where("id = ?", id).Update("download_token", token).Error
+func (r *FirmwareRepository) UpdateDownloadToken(ctx context.Context, id int64, token string, expiresAt time.Time) error {
+	return r.db.WithContext(ctx).Model(&models.Firmware{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"download_token":   token,
+		"token_expires_at": &expiresAt,
+	}).Error
 }

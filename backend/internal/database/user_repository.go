@@ -2,10 +2,16 @@ package database
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/skydashnet/miniacs/internal/models"
 	"gorm.io/gorm"
+)
+
+var (
+	ErrLastFullAdmin = errors.New("cannot remove the last full-access administrator")
+	ErrLastUser      = errors.New("cannot remove the last user")
 )
 
 type UserRepository struct {
@@ -50,23 +56,72 @@ func (r *UserRepository) List(ctx context.Context) ([]*models.User, error) {
 	return users, err
 }
 
-func (r *UserRepository) Update(ctx context.Context, id int64, username string, role models.UserRole) error {
-	return r.db.WithContext(ctx).Model(&models.User{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"username": username,
-			"role":     role,
-		}).Error
-}
-
 func (r *UserRepository) UpdatePassword(ctx context.Context, id int64, passwordHash string) error {
 	return r.db.WithContext(ctx).Model(&models.User{}).
 		Where("id = ?", id).
-		Update("password_hash", passwordHash).Error
+		Updates(map[string]interface{}{
+			"password_hash": passwordHash,
+			"token_version": gorm.Expr("token_version + 1"),
+		}).Error
 }
 
-func (r *UserRepository) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Delete(&models.User{}, id).Error
+func (r *UserRepository) UpdateAccount(ctx context.Context, id int64, username string, role models.UserRole, passwordHash string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
+			return err
+		}
+		var current models.User
+		if err := tx.First(&current, id).Error; err != nil {
+			return err
+		}
+		if current.Role == models.RoleFull && role != models.RoleFull {
+			var count int64
+			if err := tx.Model(&models.User{}).Where("role = ?", models.RoleFull).Count(&count).Error; err != nil {
+				return err
+			}
+			if count <= 1 {
+				return ErrLastFullAdmin
+			}
+		}
+		updates := map[string]interface{}{
+			"username":      username,
+			"role":          role,
+			"token_version": gorm.Expr("token_version + 1"),
+		}
+		if passwordHash != "" {
+			updates["password_hash"] = passwordHash
+		}
+		return tx.Model(&models.User{}).Where("id = ?", id).Updates(updates).Error
+	})
+}
+
+func (r *UserRepository) DeleteSafely(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
+			return err
+		}
+		var user models.User
+		if err := tx.First(&user, id).Error; err != nil {
+			return err
+		}
+		var userCount int64
+		if err := tx.Model(&models.User{}).Count(&userCount).Error; err != nil {
+			return err
+		}
+		if userCount <= 1 {
+			return ErrLastUser
+		}
+		if user.Role == models.RoleFull {
+			var count int64
+			if err := tx.Model(&models.User{}).Where("role = ?", models.RoleFull).Count(&count).Error; err != nil {
+				return err
+			}
+			if count <= 1 {
+				return ErrLastFullAdmin
+			}
+		}
+		return tx.Delete(&models.User{}, id).Error
+	})
 }
 
 func (r *UserRepository) UpdateLastLogin(ctx context.Context, id int64) error {

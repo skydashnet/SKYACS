@@ -9,8 +9,8 @@ type Fault struct {
 	FaultCode     string     `json:"fault_code" gorm:"not null"`
 	FaultString   string     `json:"fault_string"`
 	ParameterName string     `json:"parameter_name,omitempty"`
-	Resolved      bool       `json:"resolved" gorm:"default:false"`
-	CreatedAt     time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	Resolved      bool       `json:"resolved" gorm:"default:false;index"`
+	CreatedAt     time.Time  `json:"created_at" gorm:"autoCreateTime;index"`
 	ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
 }
 

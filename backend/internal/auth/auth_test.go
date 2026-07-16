@@ -1,10 +1,21 @@
 package auth
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/skydashnet/miniacs/internal/models"
 )
+
+type userLookupStub struct {
+	user *models.User
+}
+
+func (lookup userLookupStub) GetByID(context.Context, int64) (*models.User, error) {
+	return lookup.user, nil
+}
 
 func TestTokenRoundTrip(t *testing.T) {
 	if err := ConfigureJWT("0123456789abcdef0123456789abcdef"); err != nil {
@@ -40,5 +51,28 @@ func TestPasswordPolicy(t *testing.T) {
 	}
 	if err := ValidatePassword("ControlPlane2026"); err != nil {
 		t.Fatalf("strong password rejected: %v", err)
+	}
+	if err := ValidatePassword("Uppercase123" + string(make([]byte, 72))); err == nil {
+		t.Fatal("password exceeding bcrypt's input limit was accepted")
+	}
+}
+
+func TestAuthMiddlewareRejectsRevokedToken(t *testing.T) {
+	if err := ConfigureJWT("0123456789abcdef0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	issued := &models.User{ID: 7, Username: "admin", Role: models.RoleFull, TokenVersion: 1}
+	token, err := GenerateToken(issued)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	AuthMiddleware(userLookupStub{user: &models.User{ID: 7, Username: "admin", Role: models.RoleFull, TokenVersion: 2}}, next).ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked token returned status %d", recorder.Code)
 	}
 }

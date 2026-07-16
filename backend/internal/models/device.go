@@ -15,8 +15,8 @@ type Device struct {
 	SoftwareVersion      *string           `json:"software_version"`
 	IPAddress            *string           `json:"ip_address"`
 	ConnectionRequestURL *string           `json:"connection_request_url"`
-	LastInform           *time.Time        `json:"last_inform"`
-	Online               bool              `json:"online" gorm:"default:false"`
+	LastInform           *time.Time        `json:"last_inform" gorm:"index:idx_devices_online_last_inform,priority:2"`
+	Online               bool              `json:"online" gorm:"default:false;index:idx_devices_online_last_inform,priority:1"`
 	CreatedAt            time.Time         `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt            time.Time         `json:"updated_at" gorm:"autoUpdateTime"`
 	Parameters           []DeviceParameter `json:"parameters,omitempty" gorm:"foreignKey:DeviceID"`

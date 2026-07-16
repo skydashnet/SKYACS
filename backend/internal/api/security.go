@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -50,6 +51,8 @@ type loginLimiter struct {
 	window   time.Duration
 }
 
+const maxLimiterEntries = 10000
+
 func newLoginLimiter(limit int, window time.Duration) *loginLimiter {
 	return &loginLimiter{attempts: make(map[string]loginAttempt), limit: limit, window: window}
 }
@@ -59,6 +62,16 @@ func (l *loginLimiter) Allow(key string) bool {
 	defer l.mu.Unlock()
 
 	now := time.Now()
+	if len(l.attempts) > 1024 {
+		for candidate, existing := range l.attempts {
+			if now.Sub(existing.windowStart) >= l.window {
+				delete(l.attempts, candidate)
+			}
+		}
+	}
+	if _, exists := l.attempts[key]; !exists && len(l.attempts) >= maxLimiterEntries {
+		return false
+	}
 	attempt := l.attempts[key]
 	if attempt.windowStart.IsZero() || now.Sub(attempt.windowStart) >= l.window {
 		l.attempts[key] = loginAttempt{count: 1, windowStart: now}
@@ -80,10 +93,39 @@ func (l *loginLimiter) Reset(key string) {
 
 func clientIP(req *http.Request) string {
 	host, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err == nil {
-		return host
+	if err != nil {
+		host = req.RemoteAddr
 	}
-	return req.RemoteAddr
+	remoteIP := net.ParseIP(host)
+	if remoteIP != nil && isTrustedProxy(remoteIP) {
+		forwarded := strings.Split(req.Header.Get("X-Forwarded-For"), ",")
+		// Walk from the proxy nearest to miniACS toward the client. This
+		// discards trusted hops without accepting a spoofed left-most value.
+		for index := len(forwarded) - 1; index >= 0; index-- {
+			candidate := strings.TrimSpace(forwarded[index])
+			ip := net.ParseIP(candidate)
+			if ip != nil && !isTrustedProxy(ip) {
+				return candidate
+			}
+		}
+	}
+	return host
+}
+
+func isTrustedProxy(ip net.IP) bool {
+	for _, item := range strings.Split(os.Getenv("TRUSTED_PROXY_CIDRS"), ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if candidate := net.ParseIP(item); candidate != nil && candidate.Equal(ip) {
+			return true
+		}
+		if _, network, err := net.ParseCIDR(item); err == nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestBodyLimit(next http.Handler) http.Handler {
@@ -165,14 +207,18 @@ func auditMiddleware(repo *database.AuditRepository, next http.Handler) http.Han
 			UserID:    &userID,
 			Username:  claims.Username,
 			Action:    req.Method,
-			Resource:  req.URL.Path,
+			Resource:  truncate(req.URL.Path, 512),
 			Status:    status,
 			IPAddress: clientIP(req),
 			UserAgent: truncate(req.UserAgent(), 512),
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = repo.Create(ctx, entry)
+		if err := repo.Create(ctx, entry); err != nil {
+			// The API response has already been sent; report persistence failure
+			// without changing the successful operation's response.
+			log.Printf("Failed to persist audit event: %v", err)
+		}
 	})
 }
 
@@ -273,7 +319,7 @@ func (r *Router) handleAddBlockedDevice(w http.ResponseWriter, req *http.Request
 		return
 	}
 	body.SerialNumber = strings.TrimSpace(body.SerialNumber)
-	if body.SerialNumber == "" || len(body.SerialNumber) > 128 {
+	if body.SerialNumber == "" || len(body.SerialNumber) > 128 || strings.ContainsAny(body.SerialNumber, "\r\n\x00") {
 		respondError(w, http.StatusBadRequest, "Serial number is required")
 		return
 	}
@@ -285,6 +331,10 @@ func (r *Router) handleAddBlockedDevice(w http.ResponseWriter, req *http.Request
 	}
 	if err := r.blockedRepo.Add(req.Context(), device); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to block device")
+		return
+	}
+	if err := r.deviceRepo.SetOffline(req.Context(), body.SerialNumber); err != nil {
+		respondError(w, http.StatusInternalServerError, "Device was blocked but could not be marked offline")
 		return
 	}
 	respondJSON(w, http.StatusCreated, device)

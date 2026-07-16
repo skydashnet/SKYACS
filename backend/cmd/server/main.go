@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,12 +31,18 @@ import (
 
 func main() {
 	if err := godotenv.Load(); err != nil {
-		log.Println("Tidak menemukan .env file")
+		log.Println("No .env file found; using process environment")
 	}
 	if err := godotenv.Load(".miniacs.env"); err != nil {
-		log.Println("Tidak menemukan .miniacs.env file")
+		log.Println("No .miniacs.env file found")
 	}
 	if err := auth.ConfigureJWT(os.Getenv("JWT_SECRET")); err != nil {
+		log.Fatalf("Security configuration error: %v", err)
+	}
+	if err := database.ConfigureParameterEncryption(os.Getenv("PARAMETER_ENCRYPTION_KEY")); err != nil {
+		log.Fatalf("Security configuration error: %v", err)
+	}
+	if err := validateCWMPAuthenticationConfig(); err != nil {
 		log.Fatalf("Security configuration error: %v", err)
 	}
 
@@ -41,15 +51,34 @@ func main() {
 
 	db, err := connectDatabase()
 	if err != nil {
-		log.Printf("Warning: Database connection failed: %v", err)
-		log.Println("Jalankan ./setup.sh dulu untuk setup database")
-		log.Println("Server will run without database features")
-	} else {
-		log.Println("Database connected successfully")
-		if err := runAutoMigrate(db); err != nil {
-			log.Printf("Warning: AutoMigrate failed: %v", err)
-		}
+		log.Fatalf("Database connection failed: %v", err)
 	}
+	log.Println("Database connected successfully")
+	if err := runAutoMigrate(db); err != nil {
+		log.Fatalf("Database migration failed: %v", err)
+	}
+	if count, err := database.NewParameterRepository(db).EncryptLegacySensitiveValues(ctx); err != nil {
+		log.Fatalf("Sensitive parameter migration failed: %v", err)
+	} else if count > 0 {
+		log.Printf("Encrypted %d legacy sensitive parameter values", count)
+	}
+	if count, err := database.NewProvisioningRepository(db).EncryptLegacySensitiveValues(ctx); err != nil {
+		log.Fatalf("Sensitive provisioning migration failed: %v", err)
+	} else if count > 0 {
+		log.Printf("Encrypted %d legacy sensitive provisioning values", count)
+	}
+	if count, err := database.NewSettingsRepository(db).EncryptLegacySensitiveValues(ctx); err != nil {
+		log.Fatalf("Sensitive settings migration failed: %v", err)
+	} else if count > 0 {
+		log.Printf("Encrypted %d legacy sensitive settings", count)
+	}
+	if count, err := database.NewTaskRepository(db).ProtectLegacyTaskSecrets(ctx); err != nil {
+		log.Fatalf("Sensitive task migration failed: %v", err)
+	} else if count > 0 {
+		log.Printf("Protected %d legacy task records containing sensitive values", count)
+	}
+	go runTaskRecovery(ctx, database.NewTaskRepository(db))
+	go runRetentionMaintenance(ctx, db)
 
 	cwmpPort := os.Getenv("PORT")
 	if cwmpPort == "" {
@@ -59,13 +88,15 @@ func main() {
 	if apiPort == "" {
 		apiPort = "7548"
 	}
+	cwmpBindAddress := envOrDefault("CWMP_BIND_ADDR", "127.0.0.1")
+	apiBindAddress := envOrDefault("API_BIND_ADDR", "127.0.0.1")
 
 	cwmpMux := http.NewServeMux()
 	cwmpHandler := cwmp.NewHandler(db)
 	cwmpMux.Handle("/", cwmpHandler)
 
 	cwmpServer := &http.Server{
-		Addr:              ":" + cwmpPort,
+		Addr:              net.JoinHostPort(cwmpBindAddress, cwmpPort),
 		Handler:           cwmpMux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -74,61 +105,95 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 
-	var apiServer *http.Server
-	if db != nil {
-		apiMux := http.NewServeMux()
-		apiRouter := api.NewRouter(db)
-		apiMux.Handle("/", apiRouter.Handler())
+	apiMux := http.NewServeMux()
+	apiRouter := api.NewRouter(db)
+	apiMux.Handle("/", apiRouter.Handler())
 
-		apiServer = &http.Server{
-			Addr:              ":" + apiPort,
-			Handler:           apiMux,
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       60 * time.Second,
-			MaxHeaderBytes:    1 << 20,
-		}
-
-		watchdog := cwmp.NewDeviceWatchdog(db)
-		go watchdog.Start(ctx)
+	apiServer := &http.Server{
+		Addr:              net.JoinHostPort(apiBindAddress, apiPort),
+		Handler:           apiMux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
+	watchdog := cwmp.NewDeviceWatchdog(db)
+	go watchdog.Start(ctx)
+
 	go func() {
-		log.Printf("miniACS CWMP server berjalan di :%s", cwmpPort)
+		log.Printf("miniACS CWMP server listening on %s", cwmpServer.Addr)
 		if err := cwmpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("CWMP Server gagal start: %v", err)
+			log.Fatalf("CWMP server failed: %v", err)
 		}
 	}()
 
-	if apiServer != nil {
-		go func() {
-			log.Printf("miniACS API server berjalan di :%s", apiPort)
-			if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("API Server gagal start: %v", err)
-			}
-		}()
-	}
+	go func() {
+		log.Printf("miniACS API server listening on %s", apiServer.Addr)
+		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("API server failed: %v", err)
+		}
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("Shutting down servers...")
+	cancel()
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
 	if err := cwmpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("CWMP Server shutdown failed: %v", err)
 	}
-	if apiServer != nil {
-		if err := apiServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("API Server shutdown failed: %v", err)
-		}
+	if err := apiServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("API Server shutdown failed: %v", err)
 	}
 
 	log.Println("Servers stopped")
+}
+
+func validateCWMPAuthenticationConfig() error {
+	usernameSet := strings.TrimSpace(os.Getenv("CWMP_USERNAME")) != ""
+	passwordSet := os.Getenv("CWMP_PASSWORD") != ""
+	if usernameSet != passwordSet {
+		return errors.New("CWMP_USERNAME and CWMP_PASSWORD must be configured together")
+	}
+	if usernameSet && strings.TrimSpace(os.Getenv("CWMP_TRUSTED_PROXY_CIDRS")) == "" {
+		return errors.New("CWMP Basic authentication requires TLS termination and CWMP_TRUSTED_PROXY_CIDRS")
+	}
+	for _, key := range []string{"CWMP_ALLOWED_CIDRS", "CWMP_TRUSTED_PROXY_CIDRS", "TRUSTED_PROXY_CIDRS", "CONNECTION_REQUEST_ALLOWED_CIDRS"} {
+		if err := validateCIDRList(key, os.Getenv(key)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCIDRList(key, raw string) error {
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if net.ParseIP(item) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(item); err != nil {
+			return fmt.Errorf("%s contains invalid address or CIDR %q", key, item)
+		}
+	}
+	return nil
+}
+
+func envOrDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func connectDatabase() (*gorm.DB, error) {
@@ -147,8 +212,27 @@ func connectDatabase() (*gorm.DB, error) {
 			port = "5432"
 		}
 
-		dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-			host, port, user, password, dbname)
+		sslMode := os.Getenv("DB_SSLMODE")
+		if sslMode == "" {
+			if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+				sslMode = "disable"
+			} else {
+				sslMode = "verify-full"
+			}
+		}
+		switch sslMode {
+		case "disable", "require", "verify-ca", "verify-full":
+		default:
+			return nil, fmt.Errorf("unsupported DB_SSLMODE %q", sslMode)
+		}
+		query := url.Values{"sslmode": []string{sslMode}}
+		dsn = (&url.URL{
+			Scheme:   "postgres",
+			User:     url.UserPassword(user, password),
+			Host:     net.JoinHostPort(host, port),
+			Path:     "/" + dbname,
+			RawQuery: query.Encode(),
+		}).String()
 	}
 
 	gormLogger := logger.New(
@@ -172,11 +256,31 @@ func connectDatabase() (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	sqlDB.SetMaxIdleConns(5)
-	sqlDB.SetMaxOpenConns(10)
+	maxOpen, err := envInt("DB_MAX_OPEN_CONNS", 50, 1, 500)
+	if err != nil {
+		return nil, err
+	}
+	maxIdle, err := envInt("DB_MAX_IDLE_CONNS", 10, 0, maxOpen)
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxIdleConns(maxIdle)
+	sqlDB.SetMaxOpenConns(maxOpen)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return db, nil
+}
+
+func envInt(key string, fallback, minimum, maximum int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be between %d and %d", key, minimum, maximum)
+	}
+	return value, nil
 }
 
 func runAutoMigrate(db *gorm.DB) error {
@@ -190,6 +294,7 @@ func runAutoMigrate(db *gorm.DB) error {
 		&models.Fault{},
 		&models.Firmware{},
 		&models.ProvisioningRule{},
+		&models.ProvisioningApplication{},
 		&models.AuditLog{},
 		&models.BlockedDevice{},
 		&database.Setting{},
@@ -197,28 +302,37 @@ func runAutoMigrate(db *gorm.DB) error {
 
 	for _, model := range allModels {
 		if err := db.AutoMigrate(model); err != nil {
-			log.Printf("Warning: AutoMigrate for %T: %v", model, err)
+			return fmt.Errorf("migrate %T: %w", model, err)
 		}
+	}
+	if db.Migrator().HasIndex(&models.ProvisioningApplication{}, "idx_provisioning_application") {
+		if err := db.Migrator().DropIndex(&models.ProvisioningApplication{}, "idx_provisioning_application"); err != nil {
+			return fmt.Errorf("drop obsolete provisioning application index: %w", err)
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_command_key_unique ON tasks (command_key) WHERE command_key <> ''").Error; err != nil {
+		return fmt.Errorf("create unique task command key index: %w", err)
 	}
 
 	defaultSettings := []database.Setting{
-		{Key: "acs_url", Value: "http://localhost:7547/", Description: "Public CWMP endpoint advertised to devices"},
-		{Key: "firmware_base_url", Value: "http://localhost:7548", Description: "Public API base URL used by CPE firmware downloads"},
-		{Key: "acs_username", Value: "", Description: "Optional CPE-to-ACS username"},
-		{Key: "acs_password", Value: "", Description: "Optional CPE-to-ACS password"},
-		{Key: "inform_interval", Value: "3600", Description: "Periodic Inform interval in seconds"},
+		{Key: "firmware_base_url", Value: "", Description: "Public HTTPS API base URL used by CPE firmware downloads"},
 		{Key: "connection_request_username", Value: "", Description: "Connection request username"},
 		{Key: "connection_request_password", Value: "", Description: "Connection request password"},
-		{Key: "use_auto_conn_credentials", Value: "true", Description: "Derive connection request credentials per device"},
+		{Key: "use_auto_conn_credentials", Value: "false", Description: "Derive unique per-device credentials with HMAC-SHA256"},
 	}
 	for index := range defaultSettings {
 		if err := db.Where(database.Setting{Key: defaultSettings[index].Key}).FirstOrCreate(&defaultSettings[index]).Error; err != nil {
-			log.Printf("Warning: Failed to seed setting %s: %v", defaultSettings[index].Key, err)
+			return fmt.Errorf("seed setting %s: %w", defaultSettings[index].Key, err)
 		}
+	}
+	if err := db.Where("key IN ?", []string{"acs_url", "acs_username", "acs_password", "inform_interval"}).Delete(&database.Setting{}).Error; err != nil {
+		return fmt.Errorf("remove obsolete settings: %w", err)
 	}
 
 	var count int64
-	db.Model(&models.User{}).Count(&count)
+	if err := db.Model(&models.User{}).Count(&count).Error; err != nil {
+		return fmt.Errorf("count bootstrap users: %w", err)
+	}
 	if count == 0 {
 		log.Println("Creating bootstrap administrator...")
 		initialPassword := os.Getenv("INITIAL_ADMIN_PASSWORD")
@@ -239,7 +353,7 @@ func runAutoMigrate(db *gorm.DB) error {
 			Role:         models.RoleFull,
 		}
 		if err := db.Create(admin).Error; err != nil {
-			log.Printf("Warning: Failed to create admin user: %v", err)
+			return fmt.Errorf("create bootstrap administrator: %w", err)
 		} else {
 			log.Printf("Bootstrap administrator created. Username: admin Password: %s", initialPassword)
 			log.Println("Store this password securely; it is only printed once and should be rotated after first login.")
@@ -248,6 +362,67 @@ func runAutoMigrate(db *gorm.DB) error {
 
 	log.Println("Database migrations completed")
 	return nil
+}
+
+func runTaskRecovery(ctx context.Context, repo *database.TaskRepository) {
+	cleanup := func() {
+		if count, err := repo.MarkOldPendingDownloadsAsFailed(ctx, 24*time.Hour); err != nil {
+			log.Printf("Firmware task cleanup failed: %v", err)
+		} else if count > 0 {
+			log.Printf("Task cleanup marked %d expired firmware tasks as failed", count)
+		}
+		if count, err := repo.MarkOldSentAsFailed(ctx, 24*time.Hour); err != nil {
+			log.Printf("Task recovery failed: %v", err)
+		} else if count > 0 {
+			log.Printf("Task recovery marked %d stale sent tasks as failed", count)
+		}
+		if count, err := repo.MarkOldPendingAsFailed(ctx, 30*24*time.Hour); err != nil {
+			log.Printf("Pending task cleanup failed: %v", err)
+		} else if count > 0 {
+			log.Printf("Task cleanup marked %d expired pending tasks as failed", count)
+		}
+	}
+	cleanup()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
+	}
+}
+
+func runRetentionMaintenance(ctx context.Context, db *gorm.DB) {
+	cleanup := func() {
+		cutoffs := []struct {
+			model interface{}
+			query string
+			args  []interface{}
+		}{
+			{&models.AuditLog{}, "created_at < ?", []interface{}{time.Now().Add(-180 * 24 * time.Hour)}},
+			{&models.Fault{}, "resolved = ? AND resolved_at < ?", []interface{}{true, time.Now().Add(-90 * 24 * time.Hour)}},
+			{&models.Task{}, "status IN ? AND completed_at < ?", []interface{}{[]models.TaskStatus{models.TaskStatusCompleted, models.TaskStatusFailed}, time.Now().Add(-90 * 24 * time.Hour)}},
+		}
+		for _, item := range cutoffs {
+			if err := db.WithContext(ctx).Where(item.query, item.args...).Delete(item.model).Error; err != nil {
+				log.Printf("Retention cleanup failed for %T: %v", item.model, err)
+			}
+		}
+	}
+	cleanup()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
+	}
 }
 
 func generateBootstrapPassword() string {

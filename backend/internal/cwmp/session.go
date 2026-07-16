@@ -3,6 +3,8 @@ package cwmp
 import (
 	"sync"
 	"time"
+
+	"github.com/skydashnet/miniacs/internal/models"
 )
 
 // SessionState track current state of a CWMP session
@@ -13,30 +15,25 @@ const (
 	StateInformReceived
 	StateProcessingTasks
 	StateIdle
-	StateEnding
 )
 
 // Session represents single CPE session
 type Session struct {
-	ID             string
-	SerialNumber   string
-	DeviceID       int64
-	CurrentTaskID  int64
-	AutoFetchPhase int
-	DataModelRoot  string
+	mu                sync.Mutex
+	ID                string
+	SerialNumber      string
+	DeviceID          int64
+	CurrentTaskID     int64
+	AutoFetchPhase    int
+	DataModelRoot     string
+	CWMPNamespace     string
+	AutoFetchReady    bool
+	Provisioning      *SetParameterValues
+	ProvisioningRules []models.ProvisioningApplication
 
 	State        SessionState
 	CreatedAt    time.Time
 	LastActivity time.Time
-
-	PendingTasks []Task
-	TaskIndex    int
-}
-
-// Task represents pending action untuk CPE
-type Task struct {
-	Type    string // "GetParameterValues", "SetParameterValues", etc
-	Payload interface{}
 }
 
 // SessionManager manage active CWMP sessions
@@ -44,12 +41,14 @@ type SessionManager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	timeout  time.Duration
+	maxSize  int
 }
 
 func NewSessionManager(timeout time.Duration) *SessionManager {
 	sm := &SessionManager{
 		sessions: make(map[string]*Session),
 		timeout:  timeout,
+		maxSize:  100000,
 	}
 
 	// Start cleanup goroutine
@@ -64,8 +63,26 @@ func (sm *SessionManager) GetOrCreate(sessionID, serialNumber string) *Session {
 	defer sm.mu.Unlock()
 
 	if s, ok := sm.sessions[sessionID]; ok {
+		if serialNumber != "" && s.SerialNumber != serialNumber {
+			// A CWMP cookie must never carry in-flight state across devices. This
+			// can happen after a CPE restore or through a malformed client.
+			s = &Session{
+				ID:           sessionID,
+				SerialNumber: serialNumber,
+				State:        StateWaitingInform,
+				CreatedAt:    time.Now(),
+				LastActivity: time.Now(),
+			}
+			sm.sessions[sessionID] = s
+			return s
+		}
+		s.mu.Lock()
 		s.LastActivity = time.Now()
+		s.mu.Unlock()
 		return s
+	}
+	if sm.maxSize > 0 && len(sm.sessions) >= sm.maxSize {
+		sm.removeOneLocked()
 	}
 
 	s := &Session{
@@ -74,50 +91,35 @@ func (sm *SessionManager) GetOrCreate(sessionID, serialNumber string) *Session {
 		State:        StateWaitingInform,
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
-		PendingTasks: []Task{},
 	}
 	sm.sessions[sessionID] = s
 	return s
 }
 
+func (sm *SessionManager) removeOneLocked() {
+	for id := range sm.sessions {
+		delete(sm.sessions, id)
+		return
+	}
+}
+
 // Get session by ID
 func (sm *SessionManager) Get(sessionID string) *Session {
 	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return sm.sessions[sessionID]
+	session := sm.sessions[sessionID]
+	sm.mu.RUnlock()
+	if session != nil {
+		session.mu.Lock()
+		session.LastActivity = time.Now()
+		session.mu.Unlock()
+	}
+	return session
 }
 
-// Remove session
 func (sm *SessionManager) Remove(sessionID string) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 	delete(sm.sessions, sessionID)
-}
-
-// AddTask add pending task untuk device
-func (sm *SessionManager) AddTask(serialNumber string, task Task) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	// Find session by serial number dan add task
-	for _, s := range sm.sessions {
-		if s.SerialNumber == serialNumber {
-			s.PendingTasks = append(s.PendingTasks, task)
-			return
-		}
-	}
-
-	// The task remains queued and will be picked up by the next device session.
-}
-
-// GetNextTask get next pending task untuk session
-func (s *Session) GetNextTask() *Task {
-	if s.TaskIndex >= len(s.PendingTasks) {
-		return nil
-	}
-	task := &s.PendingTasks[s.TaskIndex]
-	s.TaskIndex++
-	return task
+	sm.mu.Unlock()
 }
 
 // cleanupLoop remove expired sessions
@@ -136,7 +138,10 @@ func (sm *SessionManager) cleanup() {
 
 	now := time.Now()
 	for id, s := range sm.sessions {
-		if now.Sub(s.LastActivity) > sm.timeout {
+		s.mu.Lock()
+		expired := now.Sub(s.LastActivity) > sm.timeout
+		s.mu.Unlock()
+		if expired {
 			delete(sm.sessions, id)
 		}
 	}

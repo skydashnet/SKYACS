@@ -1,13 +1,18 @@
 package cwmp
 
 import (
+	"errors"
+	"fmt"
 	"log"
+	"strings"
 )
 
-// ProcessInform handle Inform message dari CPE
-// Return InformResponse untuk dikirim balik
+// ProcessInform validates an Inform and creates the mandatory acknowledgement.
 func ProcessInform(inform *Inform) (*InformResponse, error) {
-	log.Printf("Inform dari device: %s (SN: %s)",
+	if err := validateInform(inform); err != nil {
+		return nil, err
+	}
+	log.Printf("Inform from device: %s (SN: %s)",
 		inform.DeviceId.Manufacturer,
 		inform.DeviceId.SerialNumber,
 	)
@@ -18,7 +23,7 @@ func ProcessInform(inform *Inform) (*InformResponse, error) {
 	}
 
 	// Extract important parameters
-	params := EkstrakParameterPenting(inform.ParameterList.Parameters)
+	params := ExtractImportantParameters(inform.ParameterList.Parameters)
 	log.Printf("  IP: %s, Firmware: %s",
 		params["ExternalIPAddress"],
 		params["SoftwareVersion"],
@@ -30,6 +35,41 @@ func ProcessInform(inform *Inform) (*InformResponse, error) {
 	}, nil
 }
 
+func validateInform(inform *Inform) error {
+	if inform == nil {
+		return errors.New("missing Inform payload")
+	}
+	for label, value := range map[string]string{
+		"serial number": inform.DeviceId.SerialNumber,
+		"manufacturer":  inform.DeviceId.Manufacturer,
+		"product class": inform.DeviceId.ProductClass,
+		"OUI":           inform.DeviceId.OUI,
+	} {
+		if len(value) > 128 || strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("invalid device %s", label)
+		}
+	}
+	if strings.TrimSpace(inform.DeviceId.SerialNumber) == "" {
+		return errors.New("device serial number is required")
+	}
+	if len(inform.Event.Events) > 64 {
+		return errors.New("too many Inform events")
+	}
+	if len(inform.ParameterList.Parameters) > 10000 {
+		return errors.New("too many Inform parameters")
+	}
+	for _, parameter := range inform.ParameterList.Parameters {
+		if len(parameter.Name) == 0 || len(parameter.Name) > 512 ||
+			(!strings.HasPrefix(parameter.Name, "Device.") && !strings.HasPrefix(parameter.Name, "InternetGatewayDevice.")) {
+			return fmt.Errorf("invalid Inform parameter name %q", parameter.Name)
+		}
+		if len(parameter.Value) > 64*1024 {
+			return fmt.Errorf("Inform parameter %q exceeds 64 KiB", parameter.Name)
+		}
+	}
+	return nil
+}
+
 func DetectDataModelRoot(params []ParameterValueStruct) string {
 	for _, param := range params {
 		if len(param.Name) >= len("InternetGatewayDevice.") && param.Name[:len("InternetGatewayDevice.")] == "InternetGatewayDevice." {
@@ -39,8 +79,8 @@ func DetectDataModelRoot(params []ParameterValueStruct) string {
 	return "Device."
 }
 
-// EkstrakParameterPenting extract commonly needed parameters
-func EkstrakParameterPenting(params []ParameterValueStruct) map[string]string {
+// ExtractImportantParameters extracts commonly needed parameters.
+func ExtractImportantParameters(params []ParameterValueStruct) map[string]string {
 	result := make(map[string]string)
 
 	parameterKeys := map[string]string{
@@ -70,33 +110,4 @@ func EkstrakParameterPenting(params []ParameterValueStruct) map[string]string {
 	}
 
 	return result
-}
-
-// GetEventCodes extract event codes dari Inform
-func GetEventCodes(inform *Inform) []string {
-	codes := make([]string, 0, len(inform.Event.Events))
-	for _, e := range inform.Event.Events {
-		codes = append(codes, e.EventCode)
-	}
-	return codes
-}
-
-// IsBootstrap check apakah ini bootstrap event
-func IsBootstrap(inform *Inform) bool {
-	for _, e := range inform.Event.Events {
-		if e.EventCode == EventBootstrap {
-			return true
-		}
-	}
-	return false
-}
-
-// IsPeriodic check apakah ini periodic inform
-func IsPeriodic(inform *Inform) bool {
-	for _, e := range inform.Event.Events {
-		if e.EventCode == EventPeriodic {
-			return true
-		}
-	}
-	return false
 }

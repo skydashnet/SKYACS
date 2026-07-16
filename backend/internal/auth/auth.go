@@ -15,10 +15,7 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid username or password")
-	ErrInvalidToken       = errors.New("invalid or expired token")
-	ErrUnauthorized       = errors.New("unauthorized")
-	ErrForbidden          = errors.New("forbidden")
+	ErrInvalidToken = errors.New("invalid or expired token")
 )
 
 type contextKey string
@@ -30,14 +27,16 @@ const (
 	jwtAudience       = "miniacs-web"
 	minSecretLength   = 32
 	minPasswordLength = 12
+	maxPasswordLength = 72
 )
 
 var jwtSecret []byte
 
 type Claims struct {
-	UserID   int64           `json:"user_id"`
-	Username string          `json:"username"`
-	Role     models.UserRole `json:"role"`
+	UserID       int64           `json:"user_id"`
+	Username     string          `json:"username"`
+	Role         models.UserRole `json:"role"`
+	TokenVersion uint64          `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
@@ -53,9 +52,10 @@ func CheckPassword(password, hash string) bool {
 
 func GenerateToken(user *models.User) (string, error) {
 	claims := &Claims{
-		UserID:   user.ID,
-		Username: user.Username,
-		Role:     user.Role,
+		UserID:       user.ID,
+		Username:     user.Username,
+		Role:         user.Role,
+		TokenVersion: user.TokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -97,7 +97,11 @@ func ValidateToken(tokenString string) (*Claims, error) {
 	return nil, ErrInvalidToken
 }
 
-func AuthMiddleware(next http.Handler) http.Handler {
+type UserLookup interface {
+	GetByID(context.Context, int64) (*models.User, error)
+}
+
+func AuthMiddleware(users UserLookup, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -114,6 +118,11 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		claims, err := ValidateToken(parts[1])
 		if err != nil {
 			writeAuthError(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+			return
+		}
+		user, err := users.GetByID(r.Context(), claims.UserID)
+		if err != nil || user == nil || user.Username != claims.Username || user.Role != claims.Role || user.TokenVersion != claims.TokenVersion {
+			writeAuthError(w, `{"error":"session has been revoked"}`, http.StatusUnauthorized)
 			return
 		}
 
@@ -136,23 +145,6 @@ func GetUserFromContext(ctx context.Context) *Claims {
 	return claims
 }
 
-func RequireRole(role models.UserRole, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		claims := GetUserFromContext(r.Context())
-		if claims == nil {
-			writeAuthError(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
-		}
-
-		if claims.Role != models.RoleFull && claims.Role != role {
-			writeAuthError(w, `{"error":"forbidden"}`, http.StatusForbidden)
-			return
-		}
-
-		next(w, r)
-	}
-}
-
 func RequireFullAccess(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := GetUserFromContext(r.Context())
@@ -170,21 +162,20 @@ func RequireFullAccess(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func SetJWTSecret(secret string) {
-	jwtSecret = []byte(secret)
-}
-
 func ConfigureJWT(secret string) error {
 	if len(secret) < minSecretLength {
 		return fmt.Errorf("JWT_SECRET must contain at least %d characters", minSecretLength)
 	}
-	SetJWTSecret(secret)
+	jwtSecret = []byte(secret)
 	return nil
 }
 
 func ValidatePassword(password string) error {
 	if len(password) < minPasswordLength {
 		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
+	}
+	if len(password) > maxPasswordLength {
+		return fmt.Errorf("password must not exceed %d bytes", maxPasswordLength)
 	}
 
 	var hasUpper, hasLower, hasNumber bool

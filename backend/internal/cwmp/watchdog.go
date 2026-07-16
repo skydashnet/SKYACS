@@ -2,14 +2,11 @@ package cwmp
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/binary"
+	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/icholy/digest"
 	"github.com/skydashnet/miniacs/internal/database"
 	"github.com/skydashnet/miniacs/internal/models"
 	"github.com/skydashnet/miniacs/internal/netutil"
@@ -24,7 +21,13 @@ type DeviceWatchdog struct {
 	interval       time.Duration
 	staleThreshold time.Duration
 	maxRetries     int
-	retryCount     map[int64]int
+	retryState     map[int64]watchdogRetry
+}
+
+type watchdogRetry struct {
+	attempts   int
+	lastInform time.Time
+	updatedAt  time.Time
 }
 
 func NewDeviceWatchdog(db *gorm.DB) *DeviceWatchdog {
@@ -36,7 +39,7 @@ func NewDeviceWatchdog(db *gorm.DB) *DeviceWatchdog {
 		interval:       10 * time.Minute,
 		staleThreshold: 15 * time.Minute,
 		maxRetries:     3,
-		retryCount:     make(map[int64]int),
+		retryState:     make(map[int64]watchdogRetry),
 	}
 }
 
@@ -49,7 +52,7 @@ func (w *DeviceWatchdog) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			w.cekDeviceBandel(ctx)
+			w.checkStaleDevices(ctx)
 		case <-ctx.Done():
 			log.Println("[Watchdog] Device watchdog stopped")
 			return
@@ -57,7 +60,13 @@ func (w *DeviceWatchdog) Start(ctx context.Context) {
 	}
 }
 
-func (w *DeviceWatchdog) cekDeviceBandel(ctx context.Context) {
+func (w *DeviceWatchdog) checkStaleDevices(ctx context.Context) {
+	now := time.Now()
+	for deviceID, state := range w.retryState {
+		if now.Sub(state.updatedAt) > 24*time.Hour {
+			delete(w.retryState, deviceID)
+		}
+	}
 	devices, err := w.getStaleOnlineDevices(ctx)
 	if err != nil {
 		log.Printf("[Watchdog] Error getting stale devices: %v", err)
@@ -68,9 +77,13 @@ func (w *DeviceWatchdog) cekDeviceBandel(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[Watchdog] Ditemukan %d device bandel yang perlu di-summon", len(devices))
+	log.Printf("[Watchdog] Found %d stale online devices requiring a connection request", len(devices))
 
-	settings, _ := w.settingsRepo.GetAll(ctx)
+	settings, err := w.settingsRepo.GetAll(ctx)
+	if err != nil {
+		log.Printf("[Watchdog] Error loading connection request settings: %v", err)
+		return
+	}
 	connReqUsername := ""
 	connReqPassword := ""
 	useAutoCredentials := false
@@ -87,25 +100,37 @@ func (w *DeviceWatchdog) cekDeviceBandel(ctx context.Context) {
 	}
 
 	for _, device := range devices {
+		state := w.retryState[device.ID]
+		observedInform := time.Time{}
+		if device.LastInform != nil {
+			observedInform = *device.LastInform
+		}
+		if !state.lastInform.Equal(observedInform) {
+			state = watchdogRetry{lastInform: observedInform}
+		}
+		state.attempts++
+		state.updatedAt = now
+		w.retryState[device.ID] = state
 		err := w.summonDevice(ctx, device, connReqUsername, connReqPassword, useAutoCredentials)
 		if err != nil {
-			w.retryCount[device.ID]++
-			log.Printf("[Watchdog] Gagal summon %s (attempt %d/%d): %v",
-				device.SerialNumber, w.retryCount[device.ID], w.maxRetries, err)
-
-			w.logFault(ctx, device, "WATCHDOG_SUMMON_FAILED", err.Error())
-
-			if w.retryCount[device.ID] >= w.maxRetries {
-				log.Printf("[Watchdog] Device %s sudah %dx gagal, mark sebagai offline",
-					device.SerialNumber, w.maxRetries)
-				w.deviceRepo.SetOffline(ctx, device.SerialNumber)
-				w.logFault(ctx, device, "WATCHDOG_MARKED_OFFLINE",
-					"Device tidak responsif setelah "+string(rune(w.maxRetries))+" kali percobaan summon")
-				delete(w.retryCount, device.ID)
+			log.Printf("[Watchdog] Connection request to %s failed (attempt %d/%d): %v",
+				device.SerialNumber, state.attempts, w.maxRetries, err)
+			if state.attempts == 1 {
+				w.logFault(ctx, device, "WATCHDOG_SUMMON_FAILED", err.Error())
 			}
 		} else {
-			log.Printf("[Watchdog] Berhasil summon %s", device.SerialNumber)
-			delete(w.retryCount, device.ID)
+			log.Printf("[Watchdog] Connection request diterima %s; menunggu Inform", device.SerialNumber)
+		}
+
+		if state.attempts >= w.maxRetries {
+			log.Printf("[Watchdog] Device %s did not send Inform after %d connection requests; marking offline",
+				device.SerialNumber, w.maxRetries)
+			if err := w.deviceRepo.SetOffline(ctx, device.SerialNumber); err != nil {
+				log.Printf("[Watchdog] Failed to mark %s offline: %v", device.SerialNumber, err)
+			}
+			w.logFault(ctx, device, "WATCHDOG_MARKED_OFFLINE",
+				fmt.Sprintf("Device did not send Inform after %d connection requests", w.maxRetries))
+			delete(w.retryState, device.ID)
 		}
 
 		time.Sleep(500 * time.Millisecond)
@@ -117,7 +142,8 @@ func (w *DeviceWatchdog) getStaleOnlineDevices(ctx context.Context) ([]*models.D
 	var devices []*models.Device
 	err := w.db.WithContext(ctx).
 		Where("online = ? AND last_inform < ? AND connection_request_url IS NOT NULL AND connection_request_url != ''", true, threshold).
-		Limit(10).
+		Order("last_inform ASC").
+		Limit(25).
 		Find(&devices).Error
 	return devices, err
 }
@@ -128,24 +154,18 @@ func (w *DeviceWatchdog) summonDevice(ctx context.Context, device *models.Device
 	}
 
 	connReqURL := *device.ConnectionRequestURL
-	if err := netutil.ValidateDeviceURL(connReqURL); err != nil {
-		return err
-	}
-
-	// Jika mode auto atau credentials kosong, pakai serial number
-	if useAuto || username == "" {
+	if useAuto {
 		username = device.SerialNumber
-	}
-	if useAuto || password == "" {
-		password = generateGenieACSPassword(device.SerialNumber)
+		var err error
+		password, err = netutil.DeriveDevicePassword(device.SerialNumber, password)
+		if err != nil {
+			return err
+		}
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &digest.Transport{
-			Username: username,
-			Password: password,
-		},
+	client, err := netutil.NewDeviceHTTPClient(connReqURL, username, password, 10*time.Second)
+	if err != nil {
+		return err
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", connReqURL, nil)
@@ -173,7 +193,7 @@ func (w *DeviceWatchdog) logFault(ctx context.Context, device *models.Device, co
 		FaultString: message,
 	}
 	if err := w.faultRepo.Create(ctx, fault); err != nil {
-		log.Printf("[Watchdog] Gagal log fault: %v", err)
+		log.Printf("[Watchdog] Failed to record fault: %v", err)
 	}
 }
 
@@ -184,13 +204,4 @@ type SummonError struct {
 
 func (e *SummonError) Error() string {
 	return "Device merespons dengan status " + e.Status
-}
-
-// generateGenieACSPassword generates password compatible with GenieACS
-func generateGenieACSPassword(serialNumber string) string {
-	hash := md5.Sum([]byte(serialNumber))
-	seed := binary.BigEndian.Uint64(hash[:8])
-	maxSafeInt := uint64(9007199254740991)
-	value := seed % maxSafeInt
-	return strconv.FormatUint(value, 36)
 }

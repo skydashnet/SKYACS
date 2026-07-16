@@ -14,6 +14,7 @@ type User struct {
 	Username     string     `json:"username" gorm:"uniqueIndex:idx_users_username;not null"`
 	PasswordHash string     `json:"-" gorm:"column:password_hash;not null"`
 	Role         UserRole   `json:"role" gorm:"type:text;default:'read'"`
+	TokenVersion uint64     `json:"-" gorm:"not null;default:0"`
 	CreatedAt    time.Time  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt    time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 	LastLogin    *time.Time `json:"last_login,omitempty"`

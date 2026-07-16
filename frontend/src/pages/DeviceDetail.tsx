@@ -27,19 +27,25 @@ const DeviceDetail: Component = () => {
   const [editingModemCreds, setEditingModemCreds] = createSignal(false);
   const [showSensitive, setShowSensitive] = createSignal(false);
   const [modemCredsEdits, setModemCredsEdits] = createSignal<Record<string, string>>({});
+	const [showFactoryResetModal, setShowFactoryResetModal] = createSignal(false);
+	const [factoryResetPassword, setFactoryResetPassword] = createSignal('');
+	const closeFactoryResetModal = () => {
+	  setShowFactoryResetModal(false);
+	  setFactoryResetPassword('');
+	};
 
 
 
 
 
   onMount(() => {
-    const interval = setInterval(() => {
-      if (autoRefresh()) {
+		const interval = setInterval(() => {
+			if (autoRefresh() && document.visibilityState === 'visible') {
         refetchDevice();
         refetchParams();
         refetchTasks();
       }
-    }, 5000);
+		}, 30_000);
     onCleanup(() => clearInterval(interval));
   });
 
@@ -68,10 +74,11 @@ const DeviceDetail: Component = () => {
   };
 
   const handleFactoryReset = async () => {
-    if (!confirm('WARNING: Factory Reset akan menghapus semua konfigurasi!')) return;
+	if (!factoryResetPassword()) return;
     setActionLoading('factory-reset');
     try {
-      await api.factoryResetDevice(serial());
+	  await api.factoryResetDevice(serial(), factoryResetPassword());
+	  closeFactoryResetModal();
       showMessage('success', 'Factory Reset task created.');
       refetchTasks();
     } catch (err) {
@@ -98,12 +105,8 @@ const DeviceDetail: Component = () => {
       const result = await api.connectionRequest(serial());
       showMessage('success', result.message);
       
-      await api.getParameterValues(serial(), [
-        'InternetGatewayDevice.DeviceInfo.',
-        'InternetGatewayDevice.LANDevice.1.Hosts.',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.',
-        'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.',
-      ]);
+		const hasTR181 = (parameters() || []).some(parameter => parameter.name.startsWith('Device.'));
+		await api.getParameterValues(serial(), [hasTR181 ? 'Device.' : 'InternetGatewayDevice.']);
     } catch (err) {
       showMessage('error', 'Gagal: ' + (err as Error).message);
     }
@@ -791,7 +794,7 @@ const DeviceDetail: Component = () => {
                     <RotateCcw size={14} />
                     {actionLoading() === 'reboot' ? '...' : 'Reboot'}
                   </button>
-                  <button onClick={handleFactoryReset} disabled={actionLoading() !== null} class="btn btn-danger w-full justify-start text-sm py-2">
+				  <button onClick={() => setShowFactoryResetModal(true)} disabled={actionLoading() !== null} class="btn btn-danger w-full justify-start text-sm py-2">
                     <RotateCcw size={14} />
                     Reset
                   </button>
@@ -1273,6 +1276,35 @@ const DeviceDetail: Component = () => {
           </>
         )}
       </Show>
+
+	  {/* Factory reset step-up confirmation */}
+	  <Show when={showFactoryResetModal()}>
+		<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={closeFactoryResetModal}>
+		  <div class="card p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+			<div class="flex items-start justify-between gap-4 mb-4">
+			  <div>
+				<h3 class="text-sm font-semibold text-rose-400">Factory reset device</h3>
+				<p class="text-xs text-muted mt-1">Semua konfigurasi CPE akan dihapus. Tindakan ini tidak dapat dibatalkan.</p>
+			  </div>
+			  <button onClick={closeFactoryResetModal} class="text-muted hover:text-secondary" aria-label="Close"><X size={18} /></button>
+			</div>
+			<label class="block text-xs text-muted mb-1.5">Current account password</label>
+			<input
+			  type="password"
+			  value={factoryResetPassword()}
+			  onInput={(e) => setFactoryResetPassword(e.currentTarget.value)}
+			  onKeyDown={(e) => { if (e.key === 'Enter') void handleFactoryReset(); }}
+			  class="input w-full"
+			  autocomplete="current-password"
+			  autofocus
+			/>
+			<div class="flex justify-end gap-2 mt-5">
+			  <button onClick={closeFactoryResetModal} class="btn btn-secondary">Cancel</button>
+			  <button onClick={handleFactoryReset} disabled={!factoryResetPassword() || actionLoading() !== null} class="btn btn-danger">Confirm factory reset</button>
+			</div>
+		  </div>
+		</div>
+	  </Show>
 
       {/* Parameter Detail Modal */}
       <Show when={selectedParam()}>

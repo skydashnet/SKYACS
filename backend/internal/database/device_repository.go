@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/skydashnet/miniacs/internal/models"
@@ -32,7 +33,7 @@ func (r *DeviceRepository) UpsertFromInform(ctx context.Context, device *models.
 	}).Create(device).Error
 }
 
-func (r *DeviceRepository) GetBySerialNumber(ctx context.Context, serialNumber string) (*models.Device, error) {
+func (r *DeviceRepository) GetBySerial(ctx context.Context, serialNumber string) (*models.Device, error) {
 	var device models.Device
 	err := r.db.WithContext(ctx).Where("serial_number = ?", serialNumber).First(&device).Error
 	if err == gorm.ErrRecordNotFound {
@@ -56,10 +57,6 @@ func (r *DeviceRepository) GetByID(ctx context.Context, id int64) (*models.Devic
 	return &device, nil
 }
 
-func (r *DeviceRepository) GetBySerial(ctx context.Context, serial string) (*models.Device, error) {
-	return r.GetBySerialNumber(ctx, serial)
-}
-
 func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]*models.Device, int, error) {
 	var total int64
 	if err := r.db.WithContext(ctx).Model(&models.Device{}).Count(&total).Error; err != nil {
@@ -68,7 +65,7 @@ func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]*mode
 
 	var devices []*models.Device
 	err := r.db.WithContext(ctx).
-		Preload("Parameters", "name LIKE ? OR name LIKE ?", "%RXPower%", "%Username%").
+		Preload("Parameters", "name LIKE ?", "%RXPower%").
 		Order("last_inform DESC NULLS LAST").
 		Limit(limit).
 		Offset(offset).
@@ -84,9 +81,15 @@ func (r *DeviceRepository) GetStats(ctx context.Context) (*models.DeviceStats, e
 	stats := &models.DeviceStats{}
 	var total, online, offline int64
 
-	r.db.WithContext(ctx).Model(&models.Device{}).Count(&total)
-	r.db.WithContext(ctx).Model(&models.Device{}).Where("online = ?", true).Count(&online)
-	r.db.WithContext(ctx).Model(&models.Device{}).Where("online = ?", false).Count(&offline)
+	if err := r.db.WithContext(ctx).Model(&models.Device{}).Count(&total).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.WithContext(ctx).Model(&models.Device{}).Where("online = ?", true).Count(&online).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.WithContext(ctx).Model(&models.Device{}).Where("online = ?", false).Count(&offline).Error; err != nil {
+		return nil, err
+	}
 
 	stats.Total = int(total)
 	stats.Online = int(online)
@@ -95,17 +98,32 @@ func (r *DeviceRepository) GetStats(ctx context.Context) (*models.DeviceStats, e
 	return stats, nil
 }
 
+func (r *DeviceRepository) ListForAnalytics(ctx context.Context, maxDevices int) ([]*models.Device, int, error) {
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.Device{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	patterns := []string{"%RXPower%", "%RxPower%", "%Temperature%", "%Temp%", "%UpTime%", "%PONMode%", "%AccessType%", "%TotalAssociations%", "%AssociatedDeviceNumberOfEntries%"}
+	query := r.db.WithContext(ctx)
+	conditions := make([]string, 0, len(patterns))
+	arguments := make([]interface{}, 0, len(patterns))
+	for _, pattern := range patterns {
+		conditions = append(conditions, "name LIKE ?")
+		arguments = append(arguments, pattern)
+	}
+	preloadArgs := append([]interface{}{"(" + strings.Join(conditions, " OR ") + ")"}, arguments...)
+	var devices []*models.Device
+	err := query.Preload("Parameters", preloadArgs...).
+		Order("last_inform DESC NULLS LAST").
+		Limit(maxDevices).
+		Find(&devices).Error
+	return devices, int(total), err
+}
+
 func (r *DeviceRepository) SetOffline(ctx context.Context, serialNumber string) error {
 	return r.db.WithContext(ctx).Model(&models.Device{}).
 		Where("serial_number = ?", serialNumber).
 		Update("online", false).Error
-}
-
-func (r *DeviceRepository) MarkStaleOffline(ctx context.Context, threshold time.Duration) (int64, error) {
-	result := r.db.WithContext(ctx).Model(&models.Device{}).
-		Where("online = ? AND last_inform < ?", true, time.Now().Add(-threshold)).
-		Update("online", false)
-	return result.RowsAffected, result.Error
 }
 
 func (r *DeviceRepository) Delete(ctx context.Context, id int64) error {
@@ -117,6 +135,9 @@ func (r *DeviceRepository) Delete(ctx context.Context, id int64) error {
 			return err
 		}
 		if err := tx.Where("device_id = ?", id).Delete(&models.Fault{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("device_id = ?", id).Delete(&models.ProvisioningApplication{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&models.Device{}, id).Error

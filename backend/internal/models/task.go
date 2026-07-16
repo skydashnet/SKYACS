@@ -64,14 +64,15 @@ func (j *JSON) UnmarshalJSON(data []byte) error {
 
 type Task struct {
 	ID           int64      `json:"id" gorm:"primaryKey;autoIncrement"`
-	DeviceID     int64      `json:"device_id" gorm:"index;not null"`
+	DeviceID     int64      `json:"device_id" gorm:"index;index:idx_tasks_queue,priority:1;not null"`
+	CommandKey   string     `json:"command_key,omitempty" gorm:"size:64"`
 	Type         TaskType   `json:"type" gorm:"type:text;not null"`
 	Payload      JSON       `json:"payload" gorm:"type:jsonb"`
-	Status       TaskStatus `json:"status" gorm:"type:text;default:'pending'"`
+	Status       TaskStatus `json:"status" gorm:"type:text;default:'pending';index;index:idx_tasks_queue,priority:2;index:idx_tasks_status_sent,priority:1"`
 	Result       JSON       `json:"result" gorm:"type:jsonb"`
 	ErrorMessage string     `json:"error_message,omitempty"`
-	CreatedAt    time.Time  `json:"created_at" gorm:"autoCreateTime"`
-	SentAt       *time.Time `json:"sent_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at" gorm:"autoCreateTime;index;index:idx_tasks_queue,priority:3"`
+	SentAt       *time.Time `json:"sent_at,omitempty" gorm:"index:idx_tasks_status_sent,priority:2"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 

@@ -13,11 +13,7 @@ interface SettingField {
 }
 
 const settingFields: SettingField[] = [
-  { key: 'acs_url', label: 'ACS URL', type: 'text', placeholder: 'http://192.168.1.100:7547/' },
   { key: 'firmware_base_url', label: 'Firmware base URL', type: 'text', placeholder: 'https://acs.example.com' },
-  { key: 'acs_username', label: 'ACS Username', type: 'text', placeholder: 'Optional' },
-  { key: 'acs_password', label: 'ACS Password', type: 'password', placeholder: 'Optional' },
-  { key: 'inform_interval', label: 'Inform Interval (seconds)', type: 'number', placeholder: '3600' },
 ];
 
 const Settings: Component = () => {
@@ -49,10 +45,8 @@ const Settings: Component = () => {
 
   const [showProvModal, setShowProvModal] = createSignal(false);
   const [editingProv, setEditingProv] = createSignal<ProvisioningRule | null>(null);
-  const [provForm, setProvForm] = createSignal({ parameter_name: '', parameter_value: '', parameter_type: 'string', enabled: true, description: '' });
-
-
-
+  const emptyProvisioningRule = { parameter_name: '', parameter_value: '', parameter_type: 'string', manufacturer: '', product_class: '', enabled: true, description: '' };
+  const [provForm, setProvForm] = createSignal({ ...emptyProvisioningRule });
   const handleChange = (key: string, value: string) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
   };
@@ -115,7 +109,8 @@ const Settings: Component = () => {
       await api.changePassword(passwordForm().current, passwordForm().newPass);
       setShowPasswordModal(false);
       setPasswordForm({ current: '', newPass: '', confirm: '' });
-      alert('Password berhasil diubah');
+      alert('Password berhasil diubah. Silakan login kembali.');
+      logout();
     } catch (error) { alert((error as Error).message); }
   };
 
@@ -136,7 +131,7 @@ const Settings: Component = () => {
     try {
       await api.createProvisioningRule(provForm());
       setShowProvModal(false);
-      setProvForm({ parameter_name: '', parameter_value: '', parameter_type: 'string', enabled: true, description: '' });
+      setProvForm({ ...emptyProvisioningRule });
       refetchProvRules();
     } catch (error) { alert((error as Error).message); }
   };
@@ -165,13 +160,13 @@ const Settings: Component = () => {
 
   const openEditProv = (p: ProvisioningRule) => {
     setEditingProv(p);
-    setProvForm({ parameter_name: p.parameter_name, parameter_value: p.parameter_value, parameter_type: p.parameter_type, enabled: p.enabled, description: p.description });
+    setProvForm({ parameter_name: p.parameter_name, parameter_value: p.parameter_value, parameter_type: p.parameter_type, manufacturer: p.manufacturer || '', product_class: p.product_class || '', enabled: p.enabled, description: p.description });
     setShowProvModal(true);
   };
 
   const openCreateProv = () => {
     setEditingProv(null);
-    setProvForm({ parameter_name: '', parameter_value: '', parameter_type: 'string', enabled: true, description: '' });
+    setProvForm({ ...emptyProvisioningRule });
     setShowProvModal(true);
   };
 
@@ -335,14 +330,14 @@ const Settings: Component = () => {
 
 
 
-      {/* ACS Settings */}
+      {/* Delivery and connection request settings */}
       <div class="card p-5">
         <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
           <SettingsIcon size={14} />
-          ACS Configuration
+          Delivery & Connection Request
         </h2>
         <p class="text-muted text-xs mb-4">
-          Konfigurasi URL untuk CPE connection. Bisa menggunakan IP atau domain.
+          Firmware delivery URL dan kredensial yang dipakai miniACS untuk memanggil CPE.
         </p>
 
         <Show when={!settings.loading} fallback={
@@ -418,9 +413,22 @@ const Settings: Component = () => {
               </Show>
 
               <Show when={getValue('use_auto_conn_credentials') === 'true'}>
-                <div class="p-3 bg-sky-500/10 border border-sky-500/20 text-xs text-sky-400">
-                  <p><strong>Username:</strong> Serial Number device</p>
-                  <p><strong>Password:</strong> Auto-generated hash dari Serial Number</p>
+                <div class="space-y-3 pl-3 border-l-2 border-sky-500/30">
+                  <div>
+                    <label class="block text-xs text-muted mb-1.5">Connection Request Master Secret</label>
+                    <input
+                      type="password"
+                      value={getValue('connection_request_password')}
+                      onInput={(e) => handleChange('connection_request_password', e.currentTarget.value)}
+                      placeholder="Minimum 16 characters"
+                      class="input"
+                      disabled={!isFullAccess()}
+                    />
+                  </div>
+                  <div class="p-3 bg-sky-500/10 border border-sky-500/20 text-xs text-sky-400">
+                    <p><strong>Username:</strong> serial number device</p>
+                    <p><strong>Password:</strong> HMAC-SHA256 unik per device</p>
+                  </div>
                 </div>
               </Show>
             </div>
@@ -449,8 +457,8 @@ const Settings: Component = () => {
           <ol class="list-decimal list-inside space-y-1 ml-2">
             <li>Login ke CPE web interface</li>
             <li>Cari menu TR-069 atau CWMP settings</li>
-            <li>Set ACS URL ke: <code class="bg-elevated px-2 py-0.5 rounded text-sky-400">{getValue('acs_url') || 'http://your-server:7547/'}</code></li>
-            <li>Set username/password jika diperlukan</li>
+			<li>Set ACS URL ke endpoint CWMP deployment, misalnya <code class="bg-elevated px-2 py-0.5 rounded text-sky-400">https://cwmp.example.com/</code></li>
+			<li>Set username/password dari <code>CWMP_USERNAME</code> dan <code>CWMP_PASSWORD</code> jika autentikasi diaktifkan</li>
             <li>Save dan CPE akan auto-connect</li>
           </ol>
         </div>
@@ -587,6 +595,43 @@ const Settings: Component = () => {
                   class="input w-full"
                   placeholder="http://acs.example.com"
                 />
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-muted mb-1.5">Manufacturer scope</label>
+                  <input
+                    type="text"
+                    value={provForm().manufacturer}
+                    onInput={(e) => setProvForm(f => ({ ...f, manufacturer: e.currentTarget.value }))}
+                    class="input w-full"
+                    placeholder="Huawei"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs text-muted mb-1.5">Product class scope</label>
+                  <input
+                    type="text"
+                    value={provForm().product_class}
+                    onInput={(e) => setProvForm(f => ({ ...f, product_class: e.currentTarget.value }))}
+                    class="input w-full"
+                    placeholder="HG8145V5"
+                  />
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs text-muted mb-1.5">CWMP value type</label>
+                <select
+                  value={provForm().parameter_type}
+                  onChange={(e) => setProvForm(f => ({ ...f, parameter_type: e.currentTarget.value }))}
+                  class="input w-full"
+                >
+                  <option value="string">string</option>
+                  <option value="boolean">boolean</option>
+                  <option value="int">int</option>
+                  <option value="unsignedInt">unsignedInt</option>
+                  <option value="dateTime">dateTime</option>
+                </select>
+                <p class="text-xs text-muted mt-1">Rule diterapkan sekali saat BOOTSTRAP dan dicatat per perangkat.</p>
               </div>
               <div>
                 <label class="block text-xs text-muted mb-1.5">Description (opsional)</label>
