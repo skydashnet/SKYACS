@@ -164,6 +164,12 @@ miniACS menangani perangkat yang mematuhi CWMP/TR-069 dengan root TR-098 atau TR
 
 RPC yang saat ini ditangani meliputi `Inform`, `TransferComplete`, SOAP Fault, serta response untuk `GetParameterValues`, `GetParameterNames`, `SetParameterValues`, `Reboot`, `FactoryReset`, dan `Download`. Method di luar matriks tersebut menerima CWMP fault `8000` dan harus diuji sebelum perangkat yang bergantung padanya dimasukkan ke fleet produksi.
 
+## Dukung miniACS
+
+Jika miniACS membantu operasional jaringanmu, dukung pengembangan dan pemeliharaan proyek ini melalui Saweria.
+
+[![Dukung miniACS di Saweria](https://img.shields.io/badge/Saweria-Dukung%20miniACS-faae2b?style=for-the-badge)](https://saweria.co/skydashnet)
+
 ## Reporting security issues
 
 Jangan membuka detail kerentanan yang belum ditangani sebagai public issue. Ikuti proses pada [SECURITY.md](SECURITY.md).
