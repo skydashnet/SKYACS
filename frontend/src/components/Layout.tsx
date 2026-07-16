@@ -1,155 +1,134 @@
 import type { ParentComponent } from 'solid-js';
-import { createSignal, Show } from 'solid-js';
+import { createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { A, useLocation } from '@solidjs/router';
-import { LayoutDashboard, Router, AlertTriangle, HardDrive, Settings, Menu, X, Sun, Moon } from 'lucide-solid';
+import {
+  Activity, AlertTriangle, ChevronRight, HardDrive, LayoutDashboard, LogOut,
+  Menu, Moon, Router, Settings, ShieldCheck, Sun, X,
+} from 'lucide-solid';
+import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { APP_VERSION } from '../lib/version';
 import { useTheme } from '../lib/theme';
-import { useAuth } from '../lib/auth.tsx';
 
-const navItems = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/devices', label: 'Devices', icon: Router },
-  { href: '/faults', label: 'Faults', icon: AlertTriangle },
-  { href: '/firmwares', label: 'Firmwares', icon: HardDrive },
-  { href: '/settings', label: 'Settings', icon: Settings }
+const navigation = [
+  { section: 'Monitor', items: [
+    { href: '/', label: 'Overview', icon: LayoutDashboard },
+    { href: '/devices', label: 'Devices', icon: Router },
+    { href: '/faults', label: 'Faults', icon: AlertTriangle },
+  ] },
+  { section: 'Control', items: [
+    { href: '/firmwares', label: 'Firmware', icon: HardDrive },
+    { href: '/security', label: 'Security', icon: ShieldCheck, fullOnly: true },
+    { href: '/settings', label: 'Settings', icon: Settings },
+  ] },
 ];
+
+const pageNames: Record<string, string> = {
+  '/': 'Network overview',
+  '/devices': 'Device inventory',
+  '/faults': 'Fault center',
+  '/firmwares': 'Firmware library',
+  '/security': 'Security center',
+  '/settings': 'System settings',
+};
+
+const Brand = () => (
+  <div class="brand-lockup">
+    <div class="brand-mark" aria-hidden="true">
+      <span /><span /><span />
+    </div>
+    <div>
+      <div class="brand-name">miniACS</div>
+      <div class="brand-subtitle">Independent CWMP control plane</div>
+    </div>
+  </div>
+);
 
 const Layout: ParentComponent = (props) => {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
+  const [apiOnline, setAPIOnline] = createSignal<boolean | null>(null);
   const { isDark, toggleTheme } = useTheme();
-  const { logout } = useAuth();
+  const { user, logout, isFullAccess } = useAuth();
 
-  const isActive = (href: string) => {
-    if (href === '/') return location.pathname === '/';
-    return location.pathname.startsWith(href);
+  const checkHealth = async () => {
+    try { await api.health(); setAPIOnline(true); } catch { setAPIOnline(false); }
   };
+  onMount(() => {
+    checkHealth();
+    const timer = window.setInterval(checkHealth, 30_000);
+    onCleanup(() => window.clearInterval(timer));
+  });
 
-  const closeSidebar = () => setSidebarOpen(false);
+  const isActive = (href: string) => href === '/' ? location.pathname === '/' : location.pathname.startsWith(href);
+  const pageTitle = () => location.pathname.startsWith('/device/') ? 'Device workspace' : pageNames[location.pathname] || 'Control plane';
 
   return (
-    <div class="flex h-screen bg-base transition-theme">
-      {/* Mobile Header */}
-      <div class="lg:hidden fixed top-0 left-0 right-0 h-14 bg-surface border-b border-subtle flex items-center justify-between px-4 z-40 transition-theme">
-        <div class="flex items-center">
-          <button onClick={() => setSidebarOpen(true)} class="p-2 text-secondary hover:text-primary transition-fast">
-            <Menu size={22} />
-          </button>
-          <h1 class="ml-3 text-lg font-semibold text-primary">miniACS</h1>
-          <p class="text-xs text-muted mt-0.5">TR-069 Management</p>
-        </div>
-        <button 
-          onClick={toggleTheme}
-          class="theme-toggle"
-          title={isDark() ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-        >
-          <div class="theme-toggle-knob">
-            {isDark() ? <Moon size={12} /> : <Sun size={12} />}
-          </div>
-        </button>
-      </div>
-
-      {/* Mobile Overlay */}
+    <div class="app-shell">
       <Show when={sidebarOpen()}>
-        <div class="lg:hidden fixed inset-0 bg-black/60 z-40" onClick={closeSidebar} />
+        <button class="sidebar-scrim lg:hidden" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />
       </Show>
 
-      {/* Sidebar */}
-      <aside class={`
-        sidebar fixed lg:relative inset-y-0 left-0 z-50
-        w-64 lg:w-52 flex flex-col
-        transform transition-all duration-200 ease-in-out
-        ${sidebarOpen() ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-      `}>
-        {/* Header with theme toggle top-right */}
-        <div class="p-4 border-b border-subtle flex items-center justify-between">
-          <div>
-            <h1 class="text-base font-semibold text-primary">miniACS</h1>
-            <p class="text-[10px] text-muted mt-0.5">TR-069 Management</p>
-          </div>
-          <div class="flex items-center gap-1">
-            <button 
-              onClick={toggleTheme}
-              class="p-1.5 rounded-md hover:bg-elevated text-muted hover:text-primary transition-fast hidden lg:block"
-              title={isDark() ? 'Light Mode' : 'Dark Mode'}
-            >
-              {isDark() ? <Sun size={14} /> : <Moon size={14} />}
-            </button>
-            <button onClick={closeSidebar} class="lg:hidden p-1.5 text-secondary hover:text-primary transition-fast">
-              <X size={18} />
-            </button>
-          </div>
+      <aside class={`app-sidebar ${sidebarOpen() ? 'is-open' : ''}`}>
+        <div class="sidebar-brand">
+          <Brand />
+          <button class="icon-button lg:hidden" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
         </div>
 
-        {/* Navigation with grouped items */}
-        <nav class="flex-1 px-2 py-3 overflow-y-auto">
-          {/* Main Navigation */}
-          <ul class="space-y-0.5">
-            {navItems.slice(0, 4).map((item) => (
-              <li>
-                <A
-                  href={item.href}
-                  onClick={closeSidebar}
-                  class={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-fast relative ${
-                    isActive(item.href) 
-                      ? 'bg-teal-500/10 text-teal-500 font-medium before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:bg-teal-500 before:rounded-full' 
-                      : 'text-secondary hover:bg-elevated hover:text-primary'
-                  }`}
-                >
-                  <item.icon size={16} stroke-width={1.5} />
-                  {item.label}
-                </A>
-              </li>
-            ))}
-          </ul>
-
-          {/* Divider */}
-          <div class="my-3 border-t border-subtle" />
-
-          {/* Settings */}
-          <ul class="space-y-0.5">
-            {navItems.slice(4).map((item) => (
-              <li>
-                <A
-                  href={item.href}
-                  onClick={closeSidebar}
-                  class={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-fast relative ${
-                    isActive(item.href) 
-                      ? 'bg-teal-500/10 text-teal-500 font-medium before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:bg-teal-500 before:rounded-full' 
-                      : 'text-secondary hover:bg-elevated hover:text-primary'
-                  }`}
-                >
-                  <item.icon size={16} stroke-width={1.5} />
-                  {item.label}
-                </A>
-              </li>
-            ))}
-          </ul>
+        <nav class="sidebar-nav" aria-label="Primary navigation">
+          <For each={navigation}>
+            {(group) => (
+              <div class="nav-group">
+                <p class="nav-section">{group.section}</p>
+                <For each={group.items.filter((item) => !item.fullOnly || isFullAccess())}>
+                  {(item) => (
+                    <A href={item.href} onClick={() => setSidebarOpen(false)} class={`nav-link ${isActive(item.href) ? 'is-active' : ''}`}>
+                      <item.icon size={17} stroke-width={1.7} />
+                      <span>{item.label}</span>
+                      <Show when={isActive(item.href)}><ChevronRight size={13} class="nav-chevron" /></Show>
+                    </A>
+                  )}
+                </For>
+              </div>
+            )}
+          </For>
         </nav>
 
-        {/* Footer */}
-        <div class="p-3 border-t border-subtle space-y-2">
-          <button
-            onClick={logout}
-            class="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs text-rose-400 hover:bg-rose-500/10 transition-fast"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            Logout
-          </button>
-          <div class="flex items-center justify-between text-[10px] text-muted/60">
-            <span>SkydashNET</span>
-            <span>v1.0.0-beta</span>
+        <div class="sidebar-footer">
+          <div class="operator-card">
+            <div class="operator-avatar">{user()?.username?.slice(0, 2).toUpperCase()}</div>
+            <div class="operator-copy">
+              <strong>{user()?.username}</strong>
+              <span>{isFullAccess() ? 'Full access' : 'Read only'}</span>
+            </div>
+            <button class="icon-button" onClick={logout} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
           </div>
+          <div class="sidebar-meta"><span>SkydashNET</span><span>v{APP_VERSION}</span></div>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main class="flex-1 overflow-auto pt-14 lg:pt-0 bg-base transition-theme">
-        <div class="p-4 lg:p-6">
-          {props.children}
-        </div>
-      </main>
+      <div class="app-main">
+        <header class="topbar">
+          <div class="topbar-title">
+            <button class="icon-button lg:hidden" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
+            <div>
+              <p>miniACS <span>/</span></p>
+              <h1>{pageTitle()}</h1>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <div class={`service-state ${apiOnline() === false ? 'is-down' : ''}`} title="API service status">
+              <Activity size={14} />
+              <span>{apiOnline() === null ? 'Checking API' : apiOnline() ? 'API operational' : 'API unavailable'}</span>
+            </div>
+            <button class="icon-button" onClick={toggleTheme} aria-label={isDark() ? 'Use light theme' : 'Use dark theme'}>
+              {isDark() ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+          </div>
+        </header>
+
+        <main class="content-area">{props.children}</main>
+      </div>
     </div>
   );
 };

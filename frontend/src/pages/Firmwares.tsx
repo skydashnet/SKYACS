@@ -2,8 +2,10 @@ import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For } from 'solid-js';
 import { Upload, Trash2, HardDrive, Package } from 'lucide-solid';
 import { api, type Firmware } from '../lib/api';
+import { useAuth } from '../lib/auth';
 
 const Firmwares: Component = () => {
+  const { isFullAccess } = useAuth();
   const [firmwares, { refetch }] = createResource(() => api.getFirmwares());
   const [uploading, setUploading] = createSignal(false);
   const [message, setMessage] = createSignal<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -69,7 +71,7 @@ const Firmwares: Component = () => {
 
   return (
     <div class="space-y-6">
-      <h1 class="text-xl font-semibold text-primary">Firmware Management</h1>
+      <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Image lifecycle</p><h1 class="text-xl font-semibold text-primary mt-1">Firmware library</h1><p class="text-xs text-muted mt-1">Validated artifacts ready for controlled CPE deployment.</p></div>
 
       <Show when={message()}>
         <div class={`p-3 rounded-md text-sm ${message()?.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
@@ -78,7 +80,7 @@ const Firmwares: Component = () => {
       </Show>
 
       {/* Upload Form */}
-      <div class="card p-5">
+      <Show when={isFullAccess()}><div class="card p-5">
         <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
           <Upload size={14} />
           Upload Firmware Baru
@@ -90,7 +92,7 @@ const Firmwares: Component = () => {
               ref={fileInputRef}
               type="file"
               accept=".bin,.img,.tar,.gz,.zip"
-              class="w-full px-3 py-2 bg-surface border border-default rounded-md text-sm text-secondary file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:bg-teal-600 file:text-white file:text-xs file:cursor-pointer"
+              class="w-full px-3 py-2 bg-surface border border-default rounded-[3px] text-sm text-secondary file:mr-3 file:py-1 file:px-3 file:rounded-[2px] file:border-0 file:bg-sky-600 file:text-white file:text-xs file:cursor-pointer"
             />
           </div>
           <div>
@@ -142,7 +144,7 @@ const Firmwares: Component = () => {
           <Upload size={14} />
           {uploading() ? 'Uploading...' : 'Upload Firmware'}
         </button>
-      </div>
+      </div></Show>
 
       {/* Firmware List */}
       <div class="card overflow-hidden">
@@ -179,13 +181,13 @@ const Firmwares: Component = () => {
                     <td class="px-4 py-3 text-secondary text-sm">{formatSize(fw.file_size)}</td>
                     <td class="px-4 py-3 text-muted text-xs">{formatDate(fw.created_at)}</td>
                     <td class="px-4 py-3">
-                      <button
+                      <Show when={isFullAccess()}><button
                         onClick={() => handleDelete(fw.id, fw.filename)}
                         class="text-rose-400 hover:text-rose-300 text-sm flex items-center gap-1 transition-fast"
                       >
                         <Trash2 size={12} />
                         Delete
-                      </button>
+                      </button></Show>
                     </td>
                   </tr>
                 )}

@@ -3,6 +3,7 @@ import { createResource, createSignal, Show, For, createMemo, createEffect, onMo
 import { useNavigate } from '@solidjs/router';
 import { RefreshCw, ChevronLeft, ChevronRight, Router as RouterIcon, Settings2, X, Check, GripVertical, Search, Send, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-solid';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 
 interface ColumnConfig {
   id: string;
@@ -41,6 +42,7 @@ const Devices: Component = () => {
   const [summoningAll, setSummoningAll] = createSignal(false);
   const [sortBy, setSortBy] = createSignal<{ column: string; direction: 'asc' | 'desc' } | null>(null);
   const navigate = useNavigate();
+  const { isFullAccess } = useAuth();
   const limit = 20;
 
   onMount(() => {
@@ -160,7 +162,7 @@ const Devices: Component = () => {
     switch (columnId) {
       case 'serial_number':
         return (
-          <span class="text-teal-500 font-mono text-sm">
+          <span class="text-sky-500 font-mono text-sm">
             {device.serial_number}
           </span>
         );
@@ -273,7 +275,7 @@ const Devices: Component = () => {
   return (
     <div class="space-y-5">
       <div class="flex items-center justify-between gap-3 flex-wrap">
-        <h1 class="text-xl font-semibold text-primary">List All Devices</h1>
+        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Managed CPE estate</p><h1 class="text-xl font-semibold text-primary mt-1">Device inventory</h1><p class="text-xs text-muted mt-1">Search, inspect, and operate registered TR-069 endpoints.</p></div>
         <div class="flex gap-2">
           <div class="relative">
             <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
@@ -295,12 +297,12 @@ const Devices: Component = () => {
             </Show>
           </div>
           <button onClick={() => setShowColumnSettings(!showColumnSettings())}
-            class={`btn btn-secondary ${showColumnSettings() ? 'bg-teal-500/20 text-teal-400' : ''}`}
+            class={`btn btn-secondary ${showColumnSettings() ? 'bg-sky-500/20 text-sky-400' : ''}`}
           >
             <Settings2 size={14} />
             <span class="hidden sm:inline">Columns</span>
           </button>
-          <button 
+          <Show when={isFullAccess()}><button
             onClick={async () => {
               const list = deviceList()?.devices;
               if (!list || summoningAll()) return;
@@ -320,7 +322,7 @@ const Devices: Component = () => {
           >
             <Send size={14} class={summoningAll() ? 'animate-pulse' : ''} />
             <span class="hidden sm:inline">{summoningAll() ? 'Summoning...' : 'Summon All'}</span>
-          </button>
+          </button></Show>
           <button onClick={() => refetch()} class="btn btn-secondary">
             <RefreshCw size={14} />
             <span class="hidden sm:inline">Refresh</span>
@@ -350,7 +352,7 @@ const Devices: Component = () => {
                   <GripVertical size={12} class="text-muted" />
                   <button
                     onClick={() => toggleColumn(col.id)}
-                    class={`w-4 h-4 border flex items-center justify-center transition-colors ${col.visible ? 'bg-teal-500 border-teal-500' : 'border-muted bg-transparent'}`}
+                    class={`w-4 h-4 border flex items-center justify-center transition-colors ${col.visible ? 'bg-sky-500 border-sky-500' : 'border-muted bg-transparent'}`}
                   >
                     {col.visible && <Check size={10} class="text-white" />}
                   </button>
@@ -385,7 +387,7 @@ const Devices: Component = () => {
                               if (isSortable) handleSort(col.id);
                             }}
                             class={`flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
-                              isSorted ? 'text-teal-400' : 'text-muted'
+                              isSorted ? 'text-sky-400' : 'text-muted'
                             } ${isSortable ? 'hover:text-primary cursor-pointer' : 'cursor-default'}`}
                           >
                             {col.label}

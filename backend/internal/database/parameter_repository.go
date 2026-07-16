@@ -22,15 +22,35 @@ func (r *ParameterRepository) UpsertMany(ctx context.Context, deviceID int64, pa
 		return nil
 	}
 
-	for i := range params {
-		params[i].DeviceID = deviceID
-		params[i].UpdatedAt = time.Now()
+	now := time.Now()
+	for index := range params {
+		params[index].DeviceID = deviceID
+		params[index].UpdatedAt = now
 	}
-
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "device_id"}, {Name: "name"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
-	}).Create(&params).Error
+	}).CreateInBatches(&params, 500).Error
+}
+
+func (r *ParameterRepository) UpsertWritable(ctx context.Context, deviceID int64, params []models.DeviceParameter) error {
+	if len(params) == 0 {
+		return nil
+	}
+	now := time.Now()
+	entries := make([]models.DeviceParameter, 0, len(params))
+	for _, param := range params {
+		if param.Writable != nil {
+			entries = append(entries, models.DeviceParameter{DeviceID: deviceID, Name: param.Name, Writable: param.Writable, UpdatedAt: now})
+		}
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "device_id"}, {Name: "name"}},
+		DoUpdates: clause.AssignmentColumns([]string{"writable", "updated_at"}),
+	}).CreateInBatches(&entries, 500).Error
 }
 
 func (r *ParameterRepository) GetByDeviceID(ctx context.Context, deviceID int64) ([]models.DeviceParameter, error) {

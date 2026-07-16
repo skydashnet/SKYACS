@@ -1,173 +1,120 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-
-echo "============================================"
-echo "       miniACS Auto Setup v1.0.0-beta"
-echo "============================================"
-echo ""
-
-if [ "$EUID" -ne 0 ]; then
-  echo "Error: Jalankan script ini dengan sudo"
-  echo "Usage: sudo ./auto-setup.sh"
+if [[ ${EUID} -ne 0 ]]; then
+  echo "Run this installer with sudo: sudo ./auto-setup.sh"
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MINIACS_USER="${SUDO_USER:-$USER}"
-MINIACS_HOME="$SCRIPT_DIR"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_USER="${SUDO_USER:-root}"
+GO_VERSION="${GO_VERSION:-1.25.0}"
 
-echo "[1/7] Updating system packages..."
+echo "miniACS production installer"
+echo "Project: ${ROOT_DIR}"
+
 apt-get update -qq
+apt-get install -y -qq ca-certificates curl openssl postgresql postgresql-contrib
+systemctl enable --now postgresql
 
-echo "[2/7] Installing Go..."
-if ! command -v go &> /dev/null; then
-  GO_VERSION="1.21.6"
-  wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz
+install_go=true
+if command -v go >/dev/null 2>&1; then
+  current_go="$(go env GOVERSION | sed 's/^go//')"
+  if [[ "$(printf '%s\n' '1.25.0' "$current_go" | sort -V | head -n1)" == "1.25.0" ]]; then
+    install_go=false
+  fi
+fi
+if [[ "$install_go" == true ]]; then
+  architecture="$(dpkg --print-architecture)"
+  case "$architecture" in
+    amd64) go_arch="amd64" ;;
+    arm64) go_arch="arm64" ;;
+    *) echo "Unsupported architecture: $architecture"; exit 1 ;;
+  esac
+  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/miniacs-go.tar.gz
   rm -rf /usr/local/go
-  tar -C /usr/local -xzf /tmp/go.tar.gz
-  rm /tmp/go.tar.gz
-  
-  echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
-  export PATH=$PATH:/usr/local/go/bin
-  echo "  Go ${GO_VERSION} installed"
-else
-  echo "  Go already installed: $(go version)"
+  tar -C /usr/local -xzf /tmp/miniacs-go.tar.gz
+  rm -f /tmp/miniacs-go.tar.gz
 fi
+export PATH="/usr/local/go/bin:${PATH}"
 
-echo "[3/7] Installing PostgreSQL..."
-if ! command -v psql &> /dev/null; then
-  apt-get install -y -qq postgresql postgresql-contrib
-  systemctl start postgresql
-  systemctl enable postgresql
-  echo "  PostgreSQL installed and started"
-else
-  echo "  PostgreSQL already installed"
-  systemctl start postgresql || true
+node_major=0
+if command -v node >/dev/null 2>&1; then
+  node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
 fi
-
-echo "[4/7] Installing Node.js..."
-if ! command -v node &> /dev/null; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+if (( node_major < 20 )); then
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y -qq nodejs
-  echo "  Node.js $(node -v) installed"
-else
-  echo "  Node.js already installed: $(node -v)"
 fi
 
-echo "[5/7] Installing PM2..."
-if ! command -v pm2 &> /dev/null; then
-  npm install -g pm2 --silent
-  echo "  PM2 installed"
-else
-  echo "  PM2 already installed"
+cd "$ROOT_DIR"
+chmod +x setup.sh
+lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [[ -n "$lan_ip" ]]; then
+  export MINIACS_CORS_ALLOWED_ORIGINS="http://localhost:5173,http://127.0.0.1:5173,http://${lan_ip}:5173"
 fi
+./setup.sh
 
-echo "[6/7] Setting up database..."
-if [ -f "$MINIACS_HOME/setup.sh" ]; then
-  chmod +x "$MINIACS_HOME/setup.sh"
-  cd "$MINIACS_HOME"
-  sudo -u postgres bash -c "cd $MINIACS_HOME && ./setup.sh" || {
-    ./setup.sh
-  }
-  echo "  Database setup complete"
-else
-  echo "  Warning: setup.sh not found, skipping database setup"
-fi
+cd "$ROOT_DIR/backend"
+go build -trimpath -ldflags="-s -w" -o miniacs ./cmd/server
 
-echo "[7/7] Building application..."
+cd "$ROOT_DIR/frontend"
+npm ci --no-audit --no-fund
+npm run build
+npm install --global serve@14 --no-audit --no-fund
 
-cd "$MINIACS_HOME/backend"
-export PATH=$PATH:/usr/local/go/bin
-go build -o miniacs cmd/server/main.go
-echo "  Backend built"
+mkdir -p "$ROOT_DIR/backend/uploads/firmware"
+chown -R "$SERVICE_USER":"$SERVICE_USER" "$ROOT_DIR/backend/uploads"
 
-cd "$MINIACS_HOME/frontend"
-npm install --silent
-npm run build --silent
-echo "  Frontend built"
-
-echo ""
-echo "Configuring PM2..."
-cat > "$MINIACS_HOME/ecosystem.config.js" << 'EOF'
-module.exports = {
-  apps: [
-    {
-      name: 'miniacs',
-      cwd: './backend',
-      script: './miniacs',
-      instances: 1,
-      autorestart: true,
-      watch: false,
-      max_memory_restart: '500M',
-      env: {
-        NODE_ENV: 'production'
-      }
-    },
-    {
-      name: 'miniacs-frontend',
-      cwd: './frontend',
-      script: 'npx',
-      args: 'serve -s dist -l 5173',
-      instances: 1,
-      autorestart: true,
-      watch: false,
-      env: {
-        NODE_ENV: 'production'
-      }
-    }
-  ]
-};
-EOF
-
-npm install -g serve --silent
-
-cd "$MINIACS_HOME"
-pm2 delete all 2>/dev/null || true
-pm2 start ecosystem.config.js
-pm2 save
-
-pm2 startup systemd -u "$MINIACS_USER" --hp "/home/$MINIACS_USER" > /dev/null 2>&1 || pm2 startup
-
-cat > /etc/systemd/system/miniacs.service << EOF
+cat >/etc/systemd/system/miniacs.service <<EOF
 [Unit]
-Description=miniACS TR-069 Server
-After=network.target postgresql.service
+Description=miniACS control plane and CWMP server
+After=network-online.target postgresql.service
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=$MINIACS_USER
-WorkingDirectory=$MINIACS_HOME/backend
-ExecStart=$MINIACS_HOME/backend/miniacs
-Restart=always
+User=$SERVICE_USER
+WorkingDirectory=$ROOT_DIR/backend
+ExecStart=$ROOT_DIR/backend/miniacs
+Restart=on-failure
 RestartSec=5
-Environment=PATH=/usr/local/go/bin:/usr/bin:/bin
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=$ROOT_DIR/backend/uploads
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/miniacs-web.service <<EOF
+[Unit]
+Description=miniACS web console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$ROOT_DIR/frontend
+ExecStart=/usr/bin/serve -s dist -l 5173
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable miniacs
+systemctl enable --now miniacs miniacs-web
 
-echo ""
-echo "============================================"
-echo "       Setup Complete!"
-echo "============================================"
-echo ""
-echo "Services running:"
-pm2 status
-echo ""
-echo "Access points:"
-echo "  - Web UI:  http://localhost:5173"
-echo "  - CWMP:    http://localhost:7547/"
-echo "  - API:     http://localhost:7548/"
-echo ""
-echo "Default login: admin / admin"
-echo ""
-echo "Useful commands:"
-echo "  pm2 status          - Check service status"
-echo "  pm2 logs miniacs    - View backend logs"
-echo "  pm2 restart all     - Restart all services"
-echo ""
-echo "Selesai! Server akan auto-start setelah reboot."
+echo
+echo "Installation complete"
+echo "Web UI: http://localhost:5173"
+echo "CWMP:   http://localhost:7547/"
+echo "API:    http://localhost:7548/health"
+echo "Run: journalctl -u miniacs -n 50 to retrieve the one-time bootstrap password."

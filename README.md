@@ -1,181 +1,134 @@
-# miniACS - TR-069/CWMP Management System
+# miniACS
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![Node.js Version](https://img.shields.io/badge/Node.js-20.x-339933?style=flat&logo=node.js)](https://nodejs.org/)
-[![PostgreSQL Version](https://img.shields.io/badge/PostgreSQL-14+-4169E1?style=flat&logo=postgresql)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.0.0--beta-blue.svg)](https://github.com/skydashnet/miniacs)
+[![CI](https://github.com/skydashnet/miniACS/actions/workflows/ci.yml/badge.svg)](https://github.com/skydashnet/miniACS/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=node.js)](https://nodejs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-4169E1?logo=postgresql)](https://www.postgresql.org/)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
-**TR-069/CWMP Auto Configuration Server**
+miniACS adalah control plane TR-069/CWMP mandiri untuk inventarisasi, monitoring, provisioning, dan konfigurasi CPE. Backend CWMP, API, scheduler, database, dan web console berjalan langsung di miniACS; instalasi tidak membutuhkan GenieACS.
 
-miniACS adalah ACS (Auto Configuration Server) ringan untuk manajemen perangkat CPE melalui protokol TR-069/CWMP. Dibangun dengan fokus pada kesederhanaan, performa, dan kemudahan deployment.
+> Status: beta. Uji di lab dan siapkan jalur recovery perangkat sebelum menjalankan perubahan massal atau firmware upgrade.
 
----
+## Highlights
 
-## Fitur Utama
+- TR-098 (`InternetGatewayDevice`) dan TR-181 (`Device`) data-model discovery
+- Inventaris, statistik, parameter tree, fault, provisioning rule, dan task history
+- Get/Set parameter, reboot, factory reset, connection request, serta firmware delivery
+- Full/read-only role, session-only web token, password policy, login throttling, dan audit trail
+- Device blocklist, optional CWMP Basic Auth, dan allowlist CIDR
+- SSRF guard untuk connection request URL
+- Signed firmware URL dengan token acak per file
+- Responsive enterprise console menggunakan IBM Plex Sans dan IBM Plex Mono
+- Dark/light theme tanpa dependency font atau UI dari GenieACS
 
-- **Device Management** - Monitoring dan kontrol perangkat CPE secara real-time
-- **Parameter Configuration** - Get/Set parameter values melalui TR-069
-- **WiFi Management** - Edit SSID, password, dan konfigurasi wireless
-- **PPPoE Configuration** - Edit kredensial PPPoE langsung dari dashboard
-- **Firmware Management** - Upload dan distribusi firmware ke perangkat
-- **Fault Tracking** - Logging dan monitoring fault dari perangkat
-- **Auto Provisioning** - Konfigurasi otomatis untuk perangkat baru
-- **Auto Summon** - Auto trigger connection request untuk device yang tidak responsif
-- **Connection Request** - Trigger inform dari perangkat (Digest Auth support)
-- **Dark/Light Theme** - UI modern dengan dukungan tema gelap dan terang
+Implementasi full-root parameter discovery dan metadata writable mengadaptasi pola yang sudah dipakai pada miniACS di `skydash-netsh`. Struktur provisioning terinspirasi oleh katalog pada `skydashnet/genieacs-installer`, tetapi diterapkan langsung ke task engine miniACS.
 
----
+## Arsitektur
 
-## Tech Stack
+| Service | Default | Fungsi |
+| --- | ---: | --- |
+| Web console | `5173/tcp` | SolidJS production bundle |
+| API | `7548/tcp` | Authenticated management API dan signed firmware files |
+| CWMP | `7547/tcp` | Session TR-069 dari CPE |
+| PostgreSQL | `5432/tcp` | Persistent state |
 
-| Layer | Technology |
-|-------|------------|
-| Backend | Go 1.21+ |
-| Frontend | SolidJS + Vite |
-| Database | PostgreSQL 14+ |
-| Process Manager | PM2 |
+Backend menggunakan Go 1.25, GORM, dan PostgreSQL. Frontend menggunakan SolidJS, TypeScript, Tailwind CSS, dan Vite.
 
----
+## Quick start
 
-## Requirements
-
-### Minimum System
-- **OS**: Ubuntu 20.04+ / Debian 11+ (atau distro berbasis Debian lainnya)
-- **RAM**: 1 GB
-- **Storage**: 500 MB
-- **CPU**: 1 core
-
-### Software Dependencies
-- Go 1.21+
-- Node.js 20.x
-- PostgreSQL 14+
-- PM2 (opsional, untuk production)
-
----
-
-## Quick Start
-
-### Automated Setup (Recommended)
+### Automated install (Debian/Ubuntu)
 
 ```bash
-# Clone repository
-git clone https://github.com/skydashnet/miniacs.git
-cd miniacs
-
-# Jalankan auto setup
+git clone https://github.com/skydashnet/miniACS.git
+cd miniACS
 chmod +x auto-setup.sh
 sudo ./auto-setup.sh
 ```
 
-Script akan otomatis:
-1. Install Go, Node.js, dan PostgreSQL
-2. Setup database dan user
-3. Build backend dan frontend
-4. Konfigurasi PM2 untuk process management
-5. Setup systemd service untuk auto-start
-
-### Manual Setup
+Installer membuat database, secret, build produksi, dan dua unit systemd: `miniacs` serta `miniacs-web`. Password bootstrap dicetak sekali dan juga dapat dilihat pada startup pertama dengan:
 
 ```bash
-# Setup database
-chmod +x setup.sh
-./setup.sh
-
-# Build backend
-cd backend
-go build -o miniacs cmd/server/main.go
-
-# Build frontend
-cd ../frontend
-npm install
-npm run build
-
-# Jalankan
-cd ../backend
-./miniacs
+sudo journalctl -u miniacs -n 50 --no-pager
 ```
 
----
+### Manual development
 
-## Konfigurasi
+```bash
+cp backend/.env.example backend/.env
+# edit backend/.env; JWT_SECRET wajib diisi
+./setup.sh
 
-Buat file `.miniacs.env` di folder `backend/`:
+cd backend
+go run ./cmd/server
+```
+
+Pada terminal lain:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Login awal memakai username `admin`. Password berasal dari `INITIAL_ADMIN_PASSWORD`; jika variabel itu kosong, backend mencetak password acak sekali saat membuat user pertama. Tidak ada default `admin/admin`.
+
+## Konfigurasi keamanan
+
+Variabel penting di `backend/.env`:
 
 ```env
+PORT=7547
+API_PORT=7548
+JWT_SECRET=<minimum-32-random-characters>
+
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=miniacs
 DB_USER=miniacs
-DB_PASSWORD=your_secure_password
+DB_PASSWORD=<database-password>
+
+CORS_ALLOWED_ORIGINS=https://acs.example.com
+CWMP_USERNAME=
+CWMP_PASSWORD=
+CWMP_ALLOWED_CIDRS=10.0.0.0/8,192.0.2.0/24
+FIRMWARE_UPLOAD_DIR=/var/lib/miniacs/firmware
 ```
 
----
+Atur dari **Settings** setelah login:
 
-## Default Credentials
+- `acs_url`: endpoint CWMP yang diterima CPE, contoh `https://cwmp.example.com/`.
+- `firmware_base_url`: base URL API yang dapat dijangkau CPE, contoh `https://acs.example.com/api` bila Nginx memakai prefix `/api`.
+- connection request credentials dan Inform interval.
 
-| Service | Username | Password |
-|---------|----------|----------|
-| Web UI | admin | admin |
+Jika `CWMP_USERNAME` digunakan, `CWMP_PASSWORD` juga wajib diset dan CPE harus dikonfigurasi dengan pasangan yang sama. Batasi `7547/tcp` ke jaringan CPE memakai firewall meskipun allowlist aplikasi sudah aktif.
 
-> Ubah password default setelah instalasi melalui menu Settings.
+## Reverse proxy
 
----
+Gunakan [setup_nginx.md](setup_nginx.md) untuk TLS, static frontend, API prefix, dan firmware upload limit. Untuk deployment melalui Cloudflare, baca [setup_cloudflare.md](setup_cloudflare.md); endpoint firmware harus tetap dapat dijangkau CPE tanpa interactive Access login.
 
-## API Endpoints
+## Validasi
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/` | TR-069 CWMP endpoint |
-| GET | `/api/devices` | List semua device |
-| GET | `/api/device/{serial}` | Detail device by serial |
-| POST | `/api/device/{serial}/connection-request` | Trigger inform |
-| POST | `/api/device/{serial}/set-parameters` | Set parameter values |
-| GET | `/api/devices/analytics` | Dashboard analytics |
-| GET | `/api/faults` | List semua fault |
+```bash
+cd backend
+go test ./...
+go vet ./...
 
----
+cd ../frontend
+npm ci
+npm run build
+```
 
-## Supported Devices
+CI menjalankan rangkaian yang sama pada setiap push dan pull request.
 
-miniACS mendukung perangkat yang mengimplementasikan:
-- TR-069 (CWMP)
-- TR-098 (InternetGatewayDevice)
-- TR-181 (Device:2)
+## Dukungan perangkat
 
-Tested dengan:
-- Huawei HG8245H, HG8245H5, HG8546M
-- ZTE F660, F670L
-- FiberHome AN5506
+miniACS menangani perangkat yang mematuhi CWMP/TR-069 dengan root TR-098 atau TR-181. Vendor extension tetap berbeda antar firmware; selalu verifikasi parameter writable di lab. Profil UI saat ini mengenali pola umum Huawei, ZTE, dan FiberHome, tetapi kompatibilitas tidak dijamin untuk setiap versi firmware.
 
----
+## Reporting security issues
 
-## Troubleshooting
-
-**Device tidak muncul di dashboard**
-- Pastikan ACS URL di perangkat sudah benar: `http://server-ip:7547/`
-- Cek konektivitas jaringan antara CPE dan server ACS
-
-**Connection Request gagal**
-- Pastikan kredensial Connection Request sudah dikonfigurasi di Settings
-- Periksa firewall tidak memblokir port CPE
-
-**Database connection error**
-- Jalankan `./setup.sh` untuk setup database
-- Verifikasi kredensial di `backend/.miniacs.env`
-
----
+Jangan membuka detail kerentanan yang belum ditangani sebagai public issue. Ikuti proses pada [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT License - Lihat file [LICENSE](LICENSE) untuk detail.
-
----
-
-## Author
-
-**SkydashNET**
-
----
-
-`v1.0.0-beta`
+GNU Affero General Public License v3.0. Lihat [LICENSE](LICENSE).

@@ -15,33 +15,33 @@ type SOAPHeader struct {
 }
 
 type SOAPBody struct {
-	Inform                   *Inform                   `xml:"urn:dslforum-org:cwmp-1-0 Inform,omitempty"`
-	InformResponse           *InformResponse           `xml:"urn:dslforum-org:cwmp-1-0 InformResponse,omitempty"`
-	GetParameterValues       *GetParameterValues       `xml:"urn:dslforum-org:cwmp-1-0 GetParameterValues,omitempty"`
-	GetParameterValuesResp   *GetParameterValuesResp   `xml:"urn:dslforum-org:cwmp-1-0 GetParameterValuesResponse,omitempty"`
-	SetParameterValues       *SetParameterValues       `xml:"urn:dslforum-org:cwmp-1-0 SetParameterValues,omitempty"`
-	SetParameterValuesResp   *SetParameterValuesResp   `xml:"urn:dslforum-org:cwmp-1-0 SetParameterValuesResponse,omitempty"`
-	GetParameterNames        *GetParameterNames        `xml:"urn:dslforum-org:cwmp-1-0 GetParameterNames,omitempty"`
-	GetParameterNamesResp    *GetParameterNamesResp    `xml:"urn:dslforum-org:cwmp-1-0 GetParameterNamesResponse,omitempty"`
-	Reboot                   *Reboot                   `xml:"urn:dslforum-org:cwmp-1-0 Reboot,omitempty"`
-	RebootResponse           *RebootResponse           `xml:"urn:dslforum-org:cwmp-1-0 RebootResponse,omitempty"`
-	FactoryReset             *FactoryReset             `xml:"urn:dslforum-org:cwmp-1-0 FactoryReset,omitempty"`
-	FactoryResetResponse     *FactoryResetResponse     `xml:"urn:dslforum-org:cwmp-1-0 FactoryResetResponse,omitempty"`
-	Download                 *Download                 `xml:"urn:dslforum-org:cwmp-1-0 Download,omitempty"`
-	DownloadResponse         *DownloadResponse         `xml:"urn:dslforum-org:cwmp-1-0 DownloadResponse,omitempty"`
-	TransferComplete         *TransferComplete         `xml:"urn:dslforum-org:cwmp-1-0 TransferComplete,omitempty"`
-	TransferCompleteResp     *TransferCompleteResponse `xml:"urn:dslforum-org:cwmp-1-0 TransferCompleteResponse,omitempty"`
-	Fault                    *SOAPFault                `xml:"http://schemas.xmlsoap.org/soap/envelope/ Fault,omitempty"`
+	Inform                 *Inform                   `xml:"urn:dslforum-org:cwmp-1-0 Inform,omitempty"`
+	InformResponse         *InformResponse           `xml:"urn:dslforum-org:cwmp-1-0 InformResponse,omitempty"`
+	GetParameterValues     *GetParameterValues       `xml:"urn:dslforum-org:cwmp-1-0 GetParameterValues,omitempty"`
+	GetParameterValuesResp *GetParameterValuesResp   `xml:"urn:dslforum-org:cwmp-1-0 GetParameterValuesResponse,omitempty"`
+	SetParameterValues     *SetParameterValues       `xml:"urn:dslforum-org:cwmp-1-0 SetParameterValues,omitempty"`
+	SetParameterValuesResp *SetParameterValuesResp   `xml:"urn:dslforum-org:cwmp-1-0 SetParameterValuesResponse,omitempty"`
+	GetParameterNames      *GetParameterNames        `xml:"urn:dslforum-org:cwmp-1-0 GetParameterNames,omitempty"`
+	GetParameterNamesResp  *GetParameterNamesResp    `xml:"urn:dslforum-org:cwmp-1-0 GetParameterNamesResponse,omitempty"`
+	Reboot                 *Reboot                   `xml:"urn:dslforum-org:cwmp-1-0 Reboot,omitempty"`
+	RebootResponse         *RebootResponse           `xml:"urn:dslforum-org:cwmp-1-0 RebootResponse,omitempty"`
+	FactoryReset           *FactoryReset             `xml:"urn:dslforum-org:cwmp-1-0 FactoryReset,omitempty"`
+	FactoryResetResponse   *FactoryResetResponse     `xml:"urn:dslforum-org:cwmp-1-0 FactoryResetResponse,omitempty"`
+	Download               *Download                 `xml:"urn:dslforum-org:cwmp-1-0 Download,omitempty"`
+	DownloadResponse       *DownloadResponse         `xml:"urn:dslforum-org:cwmp-1-0 DownloadResponse,omitempty"`
+	TransferComplete       *TransferComplete         `xml:"urn:dslforum-org:cwmp-1-0 TransferComplete,omitempty"`
+	TransferCompleteResp   *TransferCompleteResponse `xml:"urn:dslforum-org:cwmp-1-0 TransferCompleteResponse,omitempty"`
+	Fault                  *SOAPFault                `xml:"http://schemas.xmlsoap.org/soap/envelope/ Fault,omitempty"`
 }
 
 // Inform message dari CPE
 type Inform struct {
-	DeviceId      DeviceId       `xml:"DeviceId"`
-	Event         EventList      `xml:"Event"`
-	MaxEnvelopes  int            `xml:"MaxEnvelopes"`
-	CurrentTime   string         `xml:"CurrentTime"`
-	RetryCount    int            `xml:"RetryCount"`
-	ParameterList ParameterList  `xml:"ParameterList"`
+	DeviceId      DeviceId      `xml:"DeviceId"`
+	Event         EventList     `xml:"Event"`
+	MaxEnvelopes  int           `xml:"MaxEnvelopes"`
+	CurrentTime   string        `xml:"CurrentTime"`
+	RetryCount    int           `xml:"RetryCount"`
+	ParameterList ParameterList `xml:"ParameterList"`
 }
 
 type DeviceId struct {
@@ -112,8 +112,8 @@ type ParameterInfoStruct struct {
 
 // SOAP Fault untuk error handling
 type SOAPFault struct {
-	FaultCode   string     `xml:"faultcode"`
-	FaultString string     `xml:"faultstring"`
+	FaultCode   string      `xml:"faultcode"`
+	FaultString string      `xml:"faultstring"`
 	Detail      FaultDetail `xml:"detail,omitempty"`
 }
 
@@ -180,10 +180,10 @@ type DownloadResponse struct {
 
 // TransferComplete - CPE notification setelah download selesai
 type TransferComplete struct {
-	CommandKey   string     `xml:"CommandKey"`
+	CommandKey   string      `xml:"CommandKey"`
 	FaultStruct  FaultStruct `xml:"FaultStruct"`
-	StartTime    string     `xml:"StartTime"`
-	CompleteTime string     `xml:"CompleteTime"`
+	StartTime    string      `xml:"StartTime"`
+	CompleteTime string      `xml:"CompleteTime"`
 }
 
 type FaultStruct struct {
@@ -200,5 +200,3 @@ type ParameterValue struct {
 	Value string `xml:"Value,omitempty"`
 	Type  string `xml:"Type,attr,omitempty"`
 }
-
-

@@ -40,3 +40,7 @@ func (r *FirmwareRepository) List(ctx context.Context) ([]*models.Firmware, erro
 func (r *FirmwareRepository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Delete(&models.Firmware{}, id).Error
 }
+
+func (r *FirmwareRepository) UpdateDownloadToken(ctx context.Context, id int64, token string) error {
+	return r.db.WithContext(ctx).Model(&models.Firmware{}).Where("id = ?", id).Update("download_token", token).Error
+}

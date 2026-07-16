@@ -105,4 +105,3 @@ func DeteksiTipeMessage(body *SOAPBody) string {
 	}
 	return "Unknown"
 }
-

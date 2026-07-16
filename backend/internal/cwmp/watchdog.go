@@ -12,6 +12,7 @@ import (
 	"github.com/icholy/digest"
 	"github.com/skydashnet/miniacs/internal/database"
 	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/miniacs/internal/netutil"
 	"gorm.io/gorm"
 )
 
@@ -127,6 +128,9 @@ func (w *DeviceWatchdog) summonDevice(ctx context.Context, device *models.Device
 	}
 
 	connReqURL := *device.ConnectionRequestURL
+	if err := netutil.ValidateDeviceURL(connReqURL); err != nil {
+		return err
+	}
 
 	// Jika mode auto atau credentials kosong, pakai serial number
 	if useAuto || username == "" {
