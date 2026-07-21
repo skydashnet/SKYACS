@@ -9,13 +9,13 @@ interface DistributionListProps {
   semantic?: boolean;
 }
 
-const semanticColor = (label: string) => {
+const semanticTone = (label: string) => {
   const normalized = label.toLowerCase();
-  if (normalized.includes('critical') || normalized.includes('poor')) return 'rgb(var(--error))';
-  if (normalized.includes('warning') || normalized.includes('fair')) return 'rgb(var(--warning))';
-  if (normalized.includes('good') || normalized.includes('normal') || normalized.includes('30 days')) return 'rgb(var(--success))';
-  if (normalized.includes('unknown')) return 'rgb(var(--text-muted))';
-  return 'rgb(var(--accent))';
+  if (normalized.includes('critical') || normalized.includes('poor')) return 'is-error';
+  if (normalized.includes('warning') || normalized.includes('fair')) return 'is-warning';
+  if (normalized.includes('good') || normalized.includes('normal') || normalized.includes('30 days')) return 'is-success';
+  if (normalized.includes('unknown')) return 'is-muted';
+  return '';
 };
 
 const DistributionList: Component<DistributionListProps> = (props) => {
@@ -31,14 +31,12 @@ const DistributionList: Component<DistributionListProps> = (props) => {
         <For each={entries()}>{([label, value]) => (
           <li class="distribution-row">
             <span class="distribution-label" title={label}>{label}</span>
-            <span class="distribution-track" aria-hidden="true">
-              <span
-                class="distribution-fill"
-                style={props.semantic
-                  ? { width: `${Math.max((value / maximum()) * 100, 1)}%`, 'background-color': semanticColor(label) }
-                  : { width: `${Math.max((value / maximum()) * 100, 1)}%` }}
-              />
-            </span>
+            <progress
+              class={`distribution-progress ${props.semantic ? semanticTone(label) : ''}`}
+              value={value}
+              max={maximum()}
+              aria-label={`${label}: ${value}`}
+            />
             <span class="distribution-value">{value.toLocaleString()}</span>
           </li>
         )}</For>

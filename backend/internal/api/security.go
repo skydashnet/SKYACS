@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -167,7 +168,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		origin := req.Header.Get("Origin")
 		if origin != "" {
-			if _, ok := allowed[origin]; !ok {
+			_, explicitlyAllowed := allowed[origin]
+			if !explicitlyAllowed && !isSameOrigin(req, origin) {
 				respondError(w, http.StatusForbidden, "Origin not allowed")
 				return
 			}
@@ -184,6 +186,31 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, req)
 	})
+}
+
+func isSameOrigin(req *http.Request, origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+
+	scheme := "http"
+	if req.TLS != nil {
+		scheme = "https"
+	} else if remoteIP := remoteAddressIP(req.RemoteAddr); remoteIP != nil && isTrustedProxy(remoteIP) {
+		if forwarded := strings.ToLower(strings.TrimSpace(strings.Split(req.Header.Get("X-Forwarded-Proto"), ",")[0])); forwarded == "http" || forwarded == "https" {
+			scheme = forwarded
+		}
+	}
+	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, req.Host)
+}
+
+func remoteAddressIP(remoteAddress string) net.IP {
+	host, _, err := net.SplitHostPort(remoteAddress)
+	if err != nil {
+		host = remoteAddress
+	}
+	return net.ParseIP(host)
 }
 
 func auditMiddleware(repo *database.AuditRepository, next http.Handler) http.Handler {

@@ -1,12 +1,45 @@
 package api
 
 import (
+	"crypto/tls"
 	"encoding/hex"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
 )
+
+func TestSameOrigin(t *testing.T) {
+	t.Setenv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
+
+	direct := httptest.NewRequest("GET", "http://acs.example.test:7548/health", nil)
+	if !isSameOrigin(direct, "http://acs.example.test:7548") {
+		t.Fatal("direct same-origin request was rejected")
+	}
+	if isSameOrigin(direct, "https://evil.example.test") {
+		t.Fatal("cross-origin request was accepted")
+	}
+
+	proxied := httptest.NewRequest("GET", "http://acs.example.test:8080/api/health", nil)
+	proxied.RemoteAddr = "127.0.0.1:41234"
+	proxied.Header.Set("X-Forwarded-Proto", "http")
+	if !isSameOrigin(proxied, "http://acs.example.test:8080") {
+		t.Fatal("trusted reverse-proxy origin was rejected")
+	}
+
+	untrusted := httptest.NewRequest("GET", "http://acs.example.test/health", nil)
+	untrusted.RemoteAddr = "203.0.113.10:41234"
+	untrusted.Header.Set("X-Forwarded-Proto", "https")
+	if isSameOrigin(untrusted, "https://acs.example.test") {
+		t.Fatal("untrusted forwarded protocol was accepted")
+	}
+
+	tlsRequest := httptest.NewRequest("GET", "https://acs.example.test/health", nil)
+	tlsRequest.TLS = &tls.ConnectionState{}
+	if !isSameOrigin(tlsRequest, "https://acs.example.test") {
+		t.Fatal("TLS same-origin request was rejected")
+	}
+}
 
 func TestValidUsername(t *testing.T) {
 	for _, username := range []string{"net.admin", "operator-1", "noc_user"} {

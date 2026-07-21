@@ -6,7 +6,7 @@
 
 [![Version](https://img.shields.io/badge/version-2.0.0-0EA5E9?style=for-the-badge)](https://github.com/skydashnet/SKYACS)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
-[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-24%20LTS-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-2563EB?style=for-the-badge)](LICENSE)
 [![Saweria](https://img.shields.io/badge/Saweria-Support%20SKYACS-FAAE2B?style=for-the-badge)](https://saweria.co/skydashnet)
@@ -41,29 +41,48 @@ SKYACS is a standalone TR-069/CWMP control plane for CPE inventory, monitoring, 
 
 | Service | Default port | Purpose |
 | --- | ---: | --- |
-| Web console | `5173/tcp` | SolidJS production bundle |
-| Management API | `7548/tcp` | Authenticated API and signed firmware delivery |
-| CWMP | `7547/tcp` | TR-069 sessions from managed CPEs |
+| Web console and API proxy | `8080/tcp` | Nginx, SolidJS production bundle, and `/api/` reverse proxy |
+| Management API | `127.0.0.1:7548/tcp` | Loopback-only authenticated API and signed firmware delivery |
+| CWMP | `127.0.0.1:7547/tcp` | Loopback-only TR-069 listener; publish through a controlled reverse proxy |
 | PostgreSQL | `5432/tcp` | Persistent operational state |
 
 The backend uses Go 1.25, GORM, and PostgreSQL. The frontend uses SolidJS, TypeScript, Tailwind CSS, and Vite.
 
 ## Quick start
 
-### Automated installation on Debian or Ubuntu
+### One-command installation
 
 ```bash
-git clone https://github.com/skydashnet/SKYACS.git
-cd SKYACS
-chmod +x auto-setup.sh
-sudo ./auto-setup.sh
+curl -fsSL https://raw.githubusercontent.com/skydashnet/SKYACS/v2.0.0/install.sh | sudo bash
 ```
 
-The installer provisions PostgreSQL, generates application secrets, builds the production artifacts, and installs the `skyacs` and `skyacs-web` systemd units. The bootstrap password is printed once and can also be retrieved from the initial service logs:
+The bootstrap installer downloads the immutable `v2.0.0` source archive into `/opt/skyacs`, creates a dedicated `skyacs` service account, installs verified Go and Node.js runtimes, provisions PostgreSQL, generates application secrets, builds the production artifacts, and configures the hardened `skyacs` systemd unit behind Nginx on port `8080`.
+
+To inspect the installer before running it:
+
+```bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/skydashnet/SKYACS/v2.0.0/install.sh
+less install.sh
+sudo bash install.sh
+```
+
+The bootstrap password is printed once by the backend and can be retrieved from the initial service logs:
 
 ```bash
 sudo journalctl -u skyacs -n 50 --no-pager
 ```
+
+Supported operating systems and their distribution-provided PostgreSQL versions:
+
+| Operating system | PostgreSQL |
+| --- | ---: |
+| Ubuntu 22.04 LTS | 14 |
+| Ubuntu 24.04 LTS | 16 |
+| Ubuntu 26.04 LTS | 18 |
+| Debian 12 | 15 |
+| Debian 13 | 17 |
+
+SKYACS validates the running PostgreSQL server and supports majors 14 through 18. PostgreSQL 13 and older are rejected because they are no longer supported upstream. A future major newer than 18 is allowed with a startup warning until it is added to the tested matrix.
 
 ### Manual development setup
 
@@ -80,7 +99,7 @@ Start the frontend in another terminal:
 
 ```bash
 cd frontend
-npm ci
+npm ci --include=dev
 npm run dev
 ```
 
@@ -134,7 +153,7 @@ Use [setup_nginx.md](setup_nginx.md) for TLS termination, static frontend delive
 
 Before deploying SKYACS into an operational network:
 
-1. Terminate TLS for the web console, API, and CWMP endpoint. Never expose ports `5173` or `7548` directly.
+1. Terminate TLS for the web console, API, and CWMP endpoint. Never expose port `7548` directly.
 2. Configure explicit CORS and trusted-proxy values, then restrict CWMP access with firewall and CIDR rules.
 3. Run services under a non-root account, back up PostgreSQL and firmware storage, and test restoration.
 4. Validate Get/Set, reboot, factory reset, and firmware delivery for every vendor, model, and firmware combination. Factory reset requires operator re-authentication.
@@ -160,12 +179,13 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 go run github.com/securego/gosec/v2/cmd/gosec@v2.22.9 -quiet ./...
 
 cd ../frontend
-npm ci
+npm ci --include=dev
 npm audit
 npm run build
 
 cd ..
-bash -n setup.sh auto-setup.sh
+bash -n install.sh setup.sh auto-setup.sh scripts/test-install-platform.sh
+bash scripts/test-install-platform.sh
 ```
 
 The CI workflow runs the same checks on every push and pull request.

@@ -35,10 +35,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      - run: npm ci --include=dev
       - run: npm audit
       - run: npm run build
 
@@ -46,4 +46,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n setup.sh auto-setup.sh
+      - run: bash -n install.sh setup.sh auto-setup.sh scripts/test-install-platform.sh
+      - run: bash scripts/test-install-platform.sh
+
+  postgres-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgresql: ['14', '15', '16', '17', '18']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgresql }}
+        env:
+          POSTGRES_DB: skyacs
+          POSTGRES_USER: skyacs
+          POSTGRES_PASSWORD: skyacs-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U skyacs -d skyacs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Start SKYACS against PostgreSQL ${{ matrix.postgresql }}
+        working-directory: backend
+        env:
+          API_BIND_ADDR: 127.0.0.1
+          CWMP_BIND_ADDR: 127.0.0.1
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_NAME: skyacs
+          DB_USER: skyacs
+          DB_PASSWORD: skyacs-ci-password
+          DB_SSLMODE: disable
+          JWT_SECRET: 0123456789abcdef0123456789abcdef
+          PARAMETER_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789
+          INITIAL_ADMIN_PASSWORD: SKYACS-CI-password-123
+        run: |
+          set -euo pipefail
+          go run ./cmd/server >/tmp/skyacs-postgres-${{ matrix.postgresql }}.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for _ in {1..30}; do
+            if curl -fsS http://127.0.0.1:7548/health >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat /tmp/skyacs-postgres-${{ matrix.postgresql }}.log
+          exit 1

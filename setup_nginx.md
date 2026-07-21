@@ -104,5 +104,5 @@ Validasi dan reload:
 sudo nginx -t
 sudo systemctl reload nginx
 curl https://acs.example.com/api/health
-sudo systemctl status skyacs skyacs-web
+sudo systemctl status skyacs nginx
 ```

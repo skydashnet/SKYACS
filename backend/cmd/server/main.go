@@ -251,6 +251,9 @@ func connectDatabase() (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validatePostgreSQLVersion(db); err != nil {
+		return nil, err
+	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -269,6 +272,34 @@ func connectDatabase() (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return db, nil
+}
+
+const (
+	minimumPostgreSQLMajor     = 14
+	maximumTestedPostgresMajor = 18
+)
+
+func validatePostgreSQLVersion(db *gorm.DB) error {
+	var versionNumber int
+	if err := db.Raw("SHOW server_version_num").Scan(&versionNumber).Error; err != nil {
+		return fmt.Errorf("read PostgreSQL server version: %w", err)
+	}
+	major, err := validatePostgreSQLVersionNumber(versionNumber)
+	if err != nil {
+		return err
+	}
+	if major > maximumTestedPostgresMajor {
+		log.Printf("Warning: PostgreSQL %d is newer than the tested range (%d-%d)", major, minimumPostgreSQLMajor, maximumTestedPostgresMajor)
+	}
+	return nil
+}
+
+func validatePostgreSQLVersionNumber(versionNumber int) (int, error) {
+	major := versionNumber / 10000
+	if major < minimumPostgreSQLMajor {
+		return major, fmt.Errorf("PostgreSQL %d is unsupported; version %d or newer is required", major, minimumPostgreSQLMajor)
+	}
+	return major, nil
 }
 
 func envInt(key string, fallback, minimum, maximum int) (int, error) {

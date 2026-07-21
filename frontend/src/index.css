@@ -156,12 +156,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .distribution-list { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
 .distribution-row { display: grid; grid-template-columns: minmax(78px, 1fr) minmax(110px, 2fr) auto; align-items: center; gap: 10px; min-width: 0; }
 .distribution-label { overflow: hidden; color: rgb(var(--text-secondary)); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.distribution-track { height: 5px; overflow: hidden; background: rgb(var(--bg-elevated)); }
-.distribution-fill { display: block; height: 100%; min-width: 1px; background: rgb(var(--accent)); }
+.distribution-progress { width: 100%; height: 5px; overflow: hidden; appearance: none; border: 0; background: rgb(var(--bg-elevated)); }
+.distribution-progress::-webkit-progress-bar { background: rgb(var(--bg-elevated)); }
+.distribution-progress::-webkit-progress-value { background: rgb(var(--accent)); }
+.distribution-progress::-moz-progress-bar { background: rgb(var(--accent)); }
+.distribution-progress.is-error::-webkit-progress-value { background: rgb(var(--error)); }
+.distribution-progress.is-error::-moz-progress-bar { background: rgb(var(--error)); }
+.distribution-progress.is-warning::-webkit-progress-value { background: rgb(var(--warning)); }
+.distribution-progress.is-warning::-moz-progress-bar { background: rgb(var(--warning)); }
+.distribution-progress.is-success::-webkit-progress-value { background: rgb(var(--success)); }
+.distribution-progress.is-success::-moz-progress-bar { background: rgb(var(--success)); }
+.distribution-progress.is-muted::-webkit-progress-value { background: rgb(var(--text-muted)); }
+.distribution-progress.is-muted::-moz-progress-bar { background: rgb(var(--text-muted)); }
 .distribution-value { min-width: 32px; color: rgb(var(--text-secondary)); font-family: "IBM Plex Mono", monospace; font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
-.distribution-list[data-tone="health"] .distribution-fill { background: rgb(var(--success)); }
-.distribution-list[data-tone="warning"] .distribution-fill { background: rgb(var(--warning)); }
-.distribution-list[data-tone="neutral"] .distribution-fill { background: rgb(var(--text-muted)); }
 
 .login-context { display: grid; grid-template-columns: 118px 1fr; gap: 0; margin-top: 36px; border-top: 1px solid rgb(var(--border-default)); }
 .login-context dt, .login-context dd { margin: 0; padding: 10px 0; border-bottom: 1px solid rgb(var(--border-subtle)); font-size: 11px; }
@@ -183,6 +190,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .btn-secondary:hover:not(:disabled) { color: rgb(var(--text-primary)); background: rgb(var(--bg-hover)); }
 .btn-danger { color: rgb(var(--error-text)); background: rgb(var(--error) / .08); border-color: rgb(var(--error) / .24); }
 .input { width: 100%; min-height: 36px; padding: 7px 10px; color: rgb(var(--text-primary)); background: rgb(var(--bg-base) / .45); border: 1px solid rgb(var(--border-default)); border-radius: 3px; font-size: 12px; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.device-search-input { padding-right: 2rem; padding-left: 2.5rem; }
 .input::placeholder { color: rgb(var(--text-muted)); }.input:focus { outline: 0; border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / .12); }
 select.input { appearance: auto; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }

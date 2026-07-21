@@ -284,8 +284,7 @@ const Devices: Component = () => {
               value={searchQuery()}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
               placeholder="Search devices..."
-              class="input w-48 text-sm"
-              style={{ "padding-left": "2.5rem", "padding-right": "2rem" }}
+              class="input device-search-input w-48 text-sm"
             />
             <Show when={searchQuery()}>
               <button

@@ -21,3 +21,18 @@ func TestEnvIntValidatesPoolBounds(t *testing.T) {
 		t.Fatal("out-of-range pool size was accepted")
 	}
 }
+
+func TestPostgreSQLVersionCompatibility(t *testing.T) {
+	for _, versionNumber := range []int{140023, 150018, 160014, 170010, 180004, 190000} {
+		major, err := validatePostgreSQLVersionNumber(versionNumber)
+		if err != nil {
+			t.Fatalf("supported PostgreSQL version %d rejected: %v", versionNumber, err)
+		}
+		if major != versionNumber/10000 {
+			t.Fatalf("unexpected major for %d: %d", versionNumber, major)
+		}
+	}
+	if _, err := validatePostgreSQLVersionNumber(130023); err == nil {
+		t.Fatal("unsupported PostgreSQL 13 was accepted")
+	}
+}
