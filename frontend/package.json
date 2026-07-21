@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,9 +12,7 @@
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@solidjs/router": "^0.15.4",
-    "apexcharts": "^5.3.6",
     "lucide-solid": "^0.563.0",
-    "solid-apexcharts": "^0.6.0",
     "solid-js": "^1.9.10"
   },
   "devDependencies": {

@@ -2,6 +2,7 @@ import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For } from 'solid-js';
 import { Save, Settings as SettingsIcon, Info, Users, Plus, Trash2, Edit2, Key, LogOut } from 'lucide-solid';
 import { api, type ProvisioningRule, type User } from '../lib/api';
+import PageHeader from '../components/PageHeader';
 
 import { useAuth } from '../lib/auth';
 
@@ -174,8 +175,7 @@ const Settings: Component = () => {
 
   return (
     <div class="space-y-5">
-      <div class="flex items-center justify-between">
-        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Control plane policy</p><h1 class="text-xl font-semibold text-primary mt-1">System settings</h1><p class="text-xs text-muted mt-1">Operator accounts, provisioning, and CWMP defaults.</p></div>
+      <PageHeader title="System settings" description="Operator accounts, provisioning, and CWMP defaults.">
         <div class="flex items-center gap-2">
           <span class="text-sm text-muted">
             Logged in as <span class="text-sky-400">{user()?.username}</span> ({user()?.role})
@@ -185,7 +185,7 @@ const Settings: Component = () => {
             Logout
           </button>
         </div>
-      </div>
+      </PageHeader>
 
       <Show when={message()}>
         <div class={`p-3 rounded-md text-sm ${message()?.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
@@ -386,7 +386,7 @@ const Settings: Component = () => {
               </div>
 
               <Show when={getValue('use_auto_conn_credentials') !== 'true'}>
-                <div class="space-y-3 pl-3 border-l-2 border-sky-500/30">
+                <div class="space-y-3 pt-3 border-t border-subtle">
                   <div>
                     <label class="block text-xs text-muted mb-1.5">Connection Request Username</label>
                     <input
@@ -413,7 +413,7 @@ const Settings: Component = () => {
               </Show>
 
               <Show when={getValue('use_auto_conn_credentials') === 'true'}>
-                <div class="space-y-3 pl-3 border-l-2 border-sky-500/30">
+                <div class="space-y-3 pt-3 border-t border-subtle">
                   <div>
                     <label class="block text-xs text-muted mb-1.5">Connection Request Master Secret</label>
                     <input

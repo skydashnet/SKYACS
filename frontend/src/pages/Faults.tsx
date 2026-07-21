@@ -4,6 +4,7 @@ import { A } from '@solidjs/router';
 import { AlertTriangle, CheckCircle, Trash2, RefreshCw } from 'lucide-solid';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import PageHeader from '../components/PageHeader';
 
 const Faults: Component = () => {
   const { isFullAccess } = useAuth();
@@ -37,44 +38,18 @@ const Faults: Component = () => {
 
   return (
     <div class="space-y-6">
-      <div class="flex items-center justify-between">
-        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">CWMP diagnostics</p><h1 class="text-xl font-semibold text-primary mt-1">Fault center</h1><p class="text-xs text-muted mt-1">Investigate and resolve device-side protocol failures.</p></div>
+      <PageHeader title="Fault center" description="Investigate and resolve device-side protocol failures.">
         <button onClick={() => refetch()} class="btn btn-secondary">
           <RefreshCw size={14} />
           Refresh
         </button>
-      </div>
+      </PageHeader>
 
-      {/* Stats */}
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="card p-5">
-          <div class="flex items-center gap-2 text-muted text-sm mb-2">
-            <AlertTriangle size={14} />
-            <span>Active Faults</span>
-          </div>
-          <p class="text-2xl font-semibold text-rose-400">
-            {stats()?.active ?? 0}
-          </p>
-        </div>
-        <div class="card p-5">
-          <div class="flex items-center gap-2 text-muted text-sm mb-2">
-            <CheckCircle size={14} />
-            <span>Resolved</span>
-          </div>
-          <p class="text-2xl font-semibold text-emerald-400">
-            {stats()?.resolved ?? 0}
-          </p>
-        </div>
-        <div class="card p-5">
-          <div class="flex items-center gap-2 text-muted text-sm mb-2">
-            <AlertTriangle size={14} />
-            <span>Total</span>
-          </div>
-          <p class="text-2xl font-semibold text-primary">
-            {stats()?.total ?? 0}
-          </p>
-        </div>
-      </div>
+      <dl class="ops-register fault-register" aria-label="Fault status register">
+        <div class="ops-register-cell is-offline"><dt>Active faults</dt><dd>{stats()?.active ?? 0}</dd><small>Awaiting operator action</small></div>
+        <div class="ops-register-cell is-online"><dt>Resolved</dt><dd>{stats()?.resolved ?? 0}</dd><small>Closed fault records</small></div>
+        <div class="ops-register-cell"><dt>Total recorded</dt><dd>{stats()?.total ?? 0}</dd><small>All CWMP fault events</small></div>
+      </dl>
 
       {/* Filter */}
       <div class="flex gap-2">
@@ -122,13 +97,13 @@ const Faults: Component = () => {
               <table class="w-full text-sm min-w-[700px]">
                 <thead>
                   <tr class="border-b border-subtle bg-surface/50">
-                    <th class="text-left px-4 py-3 text-xs font-medium text-muted uppercase">Device</th>
-                    <th class="text-left px-4 py-3 text-xs font-medium text-muted uppercase">Code</th>
-                    <th class="text-left px-4 py-3 text-xs font-medium text-muted uppercase">Message</th>
-                    <th class="text-left px-4 py-3 text-xs font-medium text-muted uppercase hidden lg:table-cell">Parameter</th>
-                    <th class="text-left px-4 py-3 text-xs font-medium text-muted uppercase hidden md:table-cell">Time</th>
-                    <th class="text-left px-4 py-3 text-xs font-medium text-muted uppercase">Status</th>
-                    <th class="text-right px-4 py-3 text-xs font-medium text-muted uppercase">Actions</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-muted">Device</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-muted">Code</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-muted">Message</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-muted hidden lg:table-cell">Parameter</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-muted hidden md:table-cell">Time</th>
+                    <th class="text-left px-4 py-3 text-xs font-medium text-muted">Status</th>
+                    <th class="text-right px-4 py-3 text-xs font-medium text-muted">Actions</th>
                   </tr>
                 </thead>
                 <tbody>

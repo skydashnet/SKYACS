@@ -757,7 +757,7 @@ const DeviceDetail: Component = () => {
               </div>
 
               {/* Device Health - Compact Horizontal */}
-              <div class="card p-4 lg:col-span-4 border-l-2 border-sky-500">
+              <div class="card p-4 lg:col-span-4">
                 <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
                   <HeartPulse size={14} />
                   Device Health
@@ -767,19 +767,19 @@ const DeviceDetail: Component = () => {
                     <div class={`text-lg font-bold font-mono ${getUptimeColor()}`}>
                       {getDeviceUptime() ? formatUptime(getDeviceUptime()!) : '-'}
                     </div>
-                    <div class="text-[10px] text-muted uppercase mt-0.5">Uptime</div>
+                    <div class="text-[10px] text-muted mt-0.5">Uptime</div>
                   </div>
                   <div>
                     <div class={`text-lg font-bold font-mono ${getRxPowerColor()}`}>
                       {getRxPower()}
                     </div>
-                    <div class="text-[10px] text-muted uppercase mt-0.5">RX dBm</div>
+                    <div class="text-[10px] text-muted mt-0.5">RX dBm</div>
                   </div>
                   <div>
                     <div class={`text-lg font-bold font-mono ${getTempColor()}`}>
                       {getTemperature()}°
                     </div>
-                    <div class="text-[10px] text-muted uppercase mt-0.5">Temp</div>
+                    <div class="text-[10px] text-muted mt-0.5">Temperature</div>
                   </div>
                 </div>
               </div>
@@ -1027,7 +1027,7 @@ const DeviceDetail: Component = () => {
             </div>
 
             {/* Row 3: WiFi Information */}
-            <div class="card p-5 border-l-2 border-emerald-500">
+            <div class="card p-5">
               <h2 class="text-xs font-medium text-muted mb-4 flex items-center gap-2">
                 <Radio size={14} />
                 WiFi Configuration
@@ -1147,12 +1147,12 @@ const DeviceDetail: Component = () => {
                   <table class="w-full text-sm">
                     <thead class="sticky top-0 bg-base z-10">
                       <tr class="border-b border-subtle bg-base">
-                        <th class="text-left px-3 py-2 text-xs font-medium text-muted uppercase">Hostname</th>
-                        <th class="text-left px-3 py-2 text-xs font-medium text-muted uppercase">IP Address</th>
-                        <th class="text-left px-3 py-2 text-xs font-medium text-muted uppercase">MAC Address</th>
-                        <th class="text-left px-3 py-2 text-xs font-medium text-muted uppercase">Interface</th>
-                        <th class="text-left px-3 py-2 text-xs font-medium text-muted uppercase">Signal</th>
-                        <th class="text-left px-3 py-2 text-xs font-medium text-muted uppercase">Uptime</th>
+                        <th class="text-left px-3 py-2 text-xs font-medium text-muted">Hostname</th>
+                        <th class="text-left px-3 py-2 text-xs font-medium text-muted">IP address</th>
+                        <th class="text-left px-3 py-2 text-xs font-medium text-muted">MAC address</th>
+                        <th class="text-left px-3 py-2 text-xs font-medium text-muted">Interface</th>
+                        <th class="text-left px-3 py-2 text-xs font-medium text-muted">Signal</th>
+                        <th class="text-left px-3 py-2 text-xs font-medium text-muted">Uptime</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1203,10 +1203,10 @@ const DeviceDetail: Component = () => {
                   <table class="w-full text-sm">
                     <thead class="bg-base sticky top-0 z-10">
                       <tr class="bg-base">
-                        <th class="text-left px-4 py-2 text-xs font-medium text-muted uppercase">Type</th>
-                        <th class="text-left px-4 py-2 text-xs font-medium text-muted uppercase">Status</th>
-                        <th class="text-left px-4 py-2 text-xs font-medium text-muted uppercase">Created</th>
-                        <th class="text-left px-4 py-2 text-xs font-medium text-muted uppercase">Error</th>
+                        <th class="text-left px-4 py-2 text-xs font-medium text-muted">Type</th>
+                        <th class="text-left px-4 py-2 text-xs font-medium text-muted">Status</th>
+                        <th class="text-left px-4 py-2 text-xs font-medium text-muted">Created</th>
+                        <th class="text-left px-4 py-2 text-xs font-medium text-muted">Error</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1250,8 +1250,8 @@ const DeviceDetail: Component = () => {
                   <table class="w-full text-sm table-fixed">
                     <thead class="bg-base sticky top-0 z-10">
                       <tr class="bg-base">
-                        <th class="text-left px-4 py-2 text-xs font-medium text-muted uppercase w-3/5">Name</th>
-                        <th class="text-left px-4 py-2 text-xs font-medium text-muted uppercase w-2/5">Value</th>
+                        <th class="text-left px-4 py-2 text-xs font-medium text-muted w-3/5">Name</th>
+                        <th class="text-left px-4 py-2 text-xs font-medium text-muted w-2/5">Value</th>
                       </tr>
                     </thead>
                     <tbody>

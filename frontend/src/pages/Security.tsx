@@ -1,6 +1,7 @@
 import type { Component } from 'solid-js';
 import { createResource, createSignal, For, Show } from 'solid-js';
-import { Ban, CheckCircle2, FileClock, KeyRound, LockKeyhole, RefreshCw, ShieldCheck, Trash2, Users } from 'lucide-solid';
+import { Ban, RefreshCw, Trash2 } from 'lucide-solid';
+import PageHeader from '../components/PageHeader';
 import { api } from '../lib/api';
 
 const Security: Component = () => {
@@ -35,26 +36,25 @@ const Security: Component = () => {
 
   return (
     <div class="space-y-5">
-      <div class="flex items-start justify-between gap-4">
-        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Access governance</p><h2 class="text-xl font-semibold tracking-[-.02em] mt-1">Security center</h2><p class="text-xs text-muted mt-1">Authentication posture, device admission, and operator audit trail.</p></div>
+      <PageHeader title="Security center" description="Authentication posture, device admission, and operator audit trail.">
         <button class="btn btn-secondary" onClick={refreshAll}><RefreshCw size={14} />Refresh</button>
-      </div>
+      </PageHeader>
 
       <Show when={message()}><div class={`px-3 py-2.5 border rounded-[3px] text-xs ${message()!.type === 'success' ? 'border-emerald-500/25 bg-emerald-500/8 text-emerald-400' : 'border-red-500/25 bg-red-500/8 text-red-400'}`}>{message()!.text}</div></Show>
 
-      <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <div class="card p-4"><div class="flex justify-between text-muted"><span class="text-[10px] uppercase tracking-wider">Operators</span><Users size={15} /></div><strong class="block mt-4 text-2xl font-mono">{overview()?.total_users ?? '—'}</strong><span class="text-[10px] text-muted">{overview()?.full_access_admins ?? 0} full-access admins</span></div>
-        <div class="card p-4"><div class="flex justify-between text-muted"><span class="text-[10px] uppercase tracking-wider">Failed events</span><FileClock size={15} /></div><strong class="block mt-4 text-2xl font-mono">{overview()?.recorded_failures ?? '—'}</strong><span class="text-[10px] text-muted">Recorded in audit trail</span></div>
-        <div class="card p-4"><div class="flex justify-between text-muted"><span class="text-[10px] uppercase tracking-wider">JWT signing</span><KeyRound size={15} /></div><strong class="block mt-4 text-sm">Configured</strong><span class="badge badge-success mt-2"><CheckCircle2 size={11} />HS256 enforced</span></div>
-        <div class="card p-4"><div class="flex justify-between text-muted"><span class="text-[10px] uppercase tracking-wider">API posture</span><ShieldCheck size={15} /></div><strong class="block mt-4 text-sm">Restricted</strong><span class="badge badge-success mt-2"><LockKeyhole size={11} />RBAC + CORS</span></div>
-      </div>
+      <dl class="ops-register security-register" aria-label="Security posture register">
+        <div class="ops-register-cell"><dt>Operators</dt><dd>{overview()?.total_users ?? '—'}</dd><small>{overview()?.full_access_admins ?? 0} full-access admins</small></div>
+        <div class="ops-register-cell"><dt>Failed events</dt><dd>{overview()?.recorded_failures ?? '—'}</dd><small>Recorded in audit trail</small></div>
+        <div class="ops-register-cell is-text"><dt>JWT signing</dt><dd>Configured</dd><small>HS256 signing enforced</small></div>
+        <div class="ops-register-cell is-text"><dt>API controls</dt><dd>Restricted</dd><small>Role-based access and CORS</small></div>
+      </dl>
 
       <div class="grid xl:grid-cols-[.8fr_1.2fr] gap-4">
-        <section class="card overflow-hidden">
+        <section class="data-panel overflow-hidden">
           <div class="p-4 border-b border-subtle"><h3 class="text-sm font-semibold">Device admission blocklist</h3><p class="text-[11px] text-muted mt-1">Blocked serials are rejected before registration or parameter processing.</p></div>
           <form onSubmit={blockDevice} class="p-4 grid sm:grid-cols-2 gap-3 border-b border-subtle bg-elevated/20">
-            <div><label class="block text-[10px] uppercase tracking-wider text-muted mb-1.5">Serial number</label><input class="input" value={serial()} onInput={(event) => setSerial(event.currentTarget.value)} required maxlength={128} placeholder="48575443…" /></div>
-            <div><label class="block text-[10px] uppercase tracking-wider text-muted mb-1.5">Reason</label><input class="input" value={reason()} onInput={(event) => setReason(event.currentTarget.value)} maxlength={512} placeholder="Unauthorized CPE" /></div>
+            <div><label class="block text-[11px] text-muted mb-1.5">Serial number</label><input class="input" value={serial()} onInput={(event) => setSerial(event.currentTarget.value)} required maxlength={128} placeholder="48575443…" /></div>
+            <div><label class="block text-[11px] text-muted mb-1.5">Reason</label><input class="input" value={reason()} onInput={(event) => setReason(event.currentTarget.value)} maxlength={512} placeholder="Unauthorized CPE" /></div>
             <button class="btn btn-danger sm:col-span-2" disabled={saving()}><Ban size={14} />{saving() ? 'Blocking…' : 'Block device'}</button>
           </form>
           <Show when={(blocked()?.length ?? 0) > 0} fallback={<div class="p-8 text-center text-xs text-muted">No blocked devices.</div>}>
@@ -62,7 +62,7 @@ const Security: Component = () => {
           </Show>
         </section>
 
-        <section class="card overflow-hidden">
+        <section class="data-panel overflow-hidden">
           <div class="p-4 border-b border-subtle flex items-center justify-between"><div><h3 class="text-sm font-semibold">Operator audit trail</h3><p class="text-[11px] text-muted mt-1">Append-only record of login and mutation activity.</p></div><span class="badge badge-success">{audit()?.total ?? 0} events</span></div>
           <div class="overflow-x-auto max-h-[480px] overflow-y-auto">
             <table class="min-w-[720px]"><thead class="sticky top-0"><tr><th class="text-left px-4 py-2.5">Time</th><th class="text-left px-4 py-2.5">Actor</th><th class="text-left px-4 py-2.5">Action</th><th class="text-left px-4 py-2.5">Resource</th><th class="text-left px-4 py-2.5">Source</th><th class="text-right px-4 py-2.5">Status</th></tr></thead>

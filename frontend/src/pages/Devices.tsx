@@ -4,6 +4,7 @@ import { useNavigate } from '@solidjs/router';
 import { RefreshCw, ChevronLeft, ChevronRight, Router as RouterIcon, Settings2, X, Check, GripVertical, Search, Send, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-solid';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import PageHeader from '../components/PageHeader';
 
 interface ColumnConfig {
   id: string;
@@ -274,8 +275,7 @@ const Devices: Component = () => {
 
   return (
     <div class="space-y-5">
-      <div class="flex items-center justify-between gap-3 flex-wrap">
-        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Managed CPE estate</p><h1 class="text-xl font-semibold text-primary mt-1">Device inventory</h1><p class="text-xs text-muted mt-1">Search, inspect, and operate registered TR-069 endpoints.</p></div>
+      <PageHeader title="Device inventory" description="Search, inspect, and operate registered TR-069 endpoints.">
         <div class="flex gap-2">
           <div class="relative">
             <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
@@ -328,7 +328,7 @@ const Devices: Component = () => {
             <span class="hidden sm:inline">Refresh</span>
           </button>
         </div>
-      </div>
+      </PageHeader>
 
       {/* Column Settings Panel */}
       <Show when={showColumnSettings()}>

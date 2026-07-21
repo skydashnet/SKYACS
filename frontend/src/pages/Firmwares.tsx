@@ -3,6 +3,7 @@ import { createResource, createSignal, Show, For } from 'solid-js';
 import { Upload, Trash2, HardDrive, Package } from 'lucide-solid';
 import { api, type Firmware } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import PageHeader from '../components/PageHeader';
 
 const Firmwares: Component = () => {
   const { isFullAccess } = useAuth();
@@ -71,7 +72,7 @@ const Firmwares: Component = () => {
 
   return (
     <div class="space-y-6">
-      <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Image lifecycle</p><h1 class="text-xl font-semibold text-primary mt-1">Firmware library</h1><p class="text-xs text-muted mt-1">Validated artifacts ready for controlled CPE deployment.</p></div>
+      <PageHeader title="Firmware library" description="Validated artifacts ready for controlled CPE deployment." />
 
       <Show when={message()}>
         <div class={`p-3 rounded-md text-sm ${message()?.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
@@ -163,12 +164,12 @@ const Firmwares: Component = () => {
           <table class="w-full">
             <thead>
               <tr class="border-b border-subtle">
-                <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wide">Filename</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wide">Version</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wide">Manufacturer</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wide">Size</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wide">Uploaded</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-muted uppercase tracking-wide">Actions</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-muted">Filename</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-muted">Version</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-muted">Manufacturer</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-muted">Size</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-muted">Uploaded</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-muted">Actions</th>
               </tr>
             </thead>
             <tbody>

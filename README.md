@@ -1,12 +1,26 @@
-# miniACS
+<div align="center">
 
-[![CI](https://github.com/skydashnet/miniACS/actions/workflows/ci.yml/badge.svg)](https://github.com/skydashnet/miniACS/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev/)
-[![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=node.js)](https://nodejs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-4169E1?logo=postgresql)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+<h1>miniACS</h1>
+
+<p><strong>Independent TR-069/CWMP control plane for managed CPE fleets</strong></p>
+
+[![Version](https://img.shields.io/badge/version-1.2.0-0EA5E9?style=for-the-badge)](https://github.com/skydashnet/miniACS)
+[![CI](https://img.shields.io/github/actions/workflow/status/skydashnet/miniACS/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](https://github.com/skydashnet/miniACS/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![License](https://img.shields.io/badge/License-AGPL--3.0-2563EB?style=for-the-badge)](LICENSE)
+[![Saweria](https://img.shields.io/badge/Saweria-Dukung%20miniACS-FAAE2B?style=for-the-badge)](https://saweria.co/skydashnet)
+
+</div>
 
 miniACS adalah control plane TR-069/CWMP mandiri untuk inventarisasi, monitoring, provisioning, dan konfigurasi CPE. Backend CWMP, API, scheduler, database, dan web console berjalan langsung di miniACS; instalasi tidak membutuhkan GenieACS.
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="miniACS network overview dashboard" width="1280" />
+  <br />
+  <sub>Network overview with representative lab telemetry.</sub>
+</p>
 
 > Status: beta. Uji di lab dan siapkan jalur recovery perangkat sebelum menjalankan perubahan massal atau firmware upgrade.
 
@@ -168,7 +182,9 @@ RPC yang saat ini ditangani meliputi `Inform`, `TransferComplete`, SOAP Fault, s
 
 Jika miniACS membantu operasional jaringanmu, dukung pengembangan dan pemeliharaan proyek ini melalui Saweria.
 
-[![Dukung miniACS di Saweria](https://img.shields.io/badge/Saweria-Dukung%20miniACS-faae2b?style=for-the-badge)](https://saweria.co/skydashnet)
+<p align="center">
+  <a href="https://saweria.co/skydashnet"><img src="https://img.shields.io/badge/Saweria-Dukung%20miniACS-FAAE2B?style=for-the-badge" alt="Dukung miniACS di Saweria" /></a>
+</p>
 
 ## Reporting security issues
 

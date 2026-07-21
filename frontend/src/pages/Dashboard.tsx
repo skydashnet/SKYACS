@@ -1,331 +1,146 @@
 import type { Component } from 'solid-js';
-import { createResource, Show, createMemo } from 'solid-js';
-import { SolidApexCharts } from 'solid-apexcharts';
+import { createMemo, createResource, For, Show } from 'solid-js';
+import PageHeader from '../components/PageHeader';
 import { api } from '../lib/api';
-import { useTheme } from '../lib/theme';
-import { Clock, Activity } from 'lucide-solid';
-import type { ApexOptions } from 'apexcharts';
+
+interface DistributionListProps {
+  data: Record<string, number>;
+  limit?: number;
+  semantic?: boolean;
+}
+
+const semanticColor = (label: string) => {
+  const normalized = label.toLowerCase();
+  if (normalized.includes('critical') || normalized.includes('poor')) return 'rgb(var(--error))';
+  if (normalized.includes('warning') || normalized.includes('fair')) return 'rgb(var(--warning))';
+  if (normalized.includes('good') || normalized.includes('normal') || normalized.includes('30 days')) return 'rgb(var(--success))';
+  if (normalized.includes('unknown')) return 'rgb(var(--text-muted))';
+  return 'rgb(var(--accent))';
+};
+
+const DistributionList: Component<DistributionListProps> = (props) => {
+  const entries = createMemo(() => Object.entries(props.data)
+    .filter(([, value]) => value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, props.limit ?? Number.POSITIVE_INFINITY));
+  const maximum = createMemo(() => Math.max(...entries().map(([, value]) => value), 1));
+
+  return (
+    <Show when={entries().length > 0} fallback={<p class="py-5 text-center text-xs text-muted">No telemetry available.</p>}>
+      <ul class="distribution-list">
+        <For each={entries()}>{([label, value]) => (
+          <li class="distribution-row">
+            <span class="distribution-label" title={label}>{label}</span>
+            <span class="distribution-track" aria-hidden="true">
+              <span
+                class="distribution-fill"
+                style={props.semantic
+                  ? { width: `${Math.max((value / maximum()) * 100, 1)}%`, 'background-color': semanticColor(label) }
+                  : { width: `${Math.max((value / maximum()) * 100, 1)}%` }}
+              />
+            </span>
+            <span class="distribution-value">{value.toLocaleString()}</span>
+          </li>
+        )}</For>
+      </ul>
+    </Show>
+  );
+};
 
 const Dashboard: Component = () => {
   const [stats] = createResource(() => api.getDeviceStats());
   const [analytics] = createResource(() => api.getDeviceAnalytics());
-  const { isDark } = useTheme();
-
-  // ============================================
-  // SECTION 1: Hero Stats (Total, Online, Offline)
-  // ============================================
   const onlinePercent = createMemo(() => {
     const total = stats()?.total ?? 0;
-    const online = stats()?.online ?? 0;
-    return total > 0 ? Math.round((online / total) * 100) : 0;
+    return total > 0 ? Math.round(((stats()?.online ?? 0) / total) * 1000) / 10 : 0;
   });
-
-  // ============================================
-  // SECTION 2: Last Inform - Horizontal Bar Chart
-  // ============================================
-  const lastInformBarOptions = createMemo<ApexOptions>(() => ({
-    chart: {
-      type: 'bar',
-      background: 'transparent',
-      toolbar: { show: false },
-      animations: { enabled: true, speed: 400 },
-    },
-    plotOptions: {
-      bar: {
-        horizontal: true,
-        borderRadius: 4,
-        barHeight: '60%',
-        distributed: true,
-      }
-    },
-    colors: ['#10b981', '#84cc16', '#f59e0b', '#f97316', '#ef4444', '#7f1d1d'],
-    dataLabels: {
-      enabled: true,
-      formatter: (val: number) => val > 0 ? String(val) : '',
-      style: { fontSize: '11px', fontWeight: 600, colors: ['#fff'] },
-      offsetX: 5,
-    },
-    xaxis: {
-      labels: { show: false },
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-    },
-    yaxis: {
-      labels: { 
-        style: { colors: isDark() ? '#a1a1aa' : '#52525b', fontSize: '11px' }
-      },
-    },
-    grid: { show: false },
-    legend: { show: false },
-    tooltip: { enabled: false },
-  }));
-
-  const lastInformData = createMemo(() => {
-    const data = analytics()?.lastInform ?? {};
-    const labels = Object.keys(data);
-    const series = Object.values(data) as number[];
-    return { labels, series: [{ data: series }] };
-  });
-
-
-  // ============================================
-  // SECTION 4: Categorical Data (Pie Charts)
-  // ============================================
-  const pieTheme = createMemo<Partial<ApexOptions>>(() => ({
-    chart: { background: 'transparent', toolbar: { show: false } },
-    theme: { mode: isDark() ? 'dark' : 'light' },
-    stroke: { width: 2, colors: [isDark() ? '#18181b' : '#ffffff'] },
-    legend: {
-      position: 'bottom',
-      fontSize: '11px',
-      labels: { colors: isDark() ? '#a1a1aa' : '#52525b' },
-    },
-    dataLabels: { enabled: false },
-    tooltip: { 
-      theme: isDark() ? 'dark' : 'light',
-      y: { formatter: (val: number) => `${val} devices` }
-    }
-  }));
-
-  const accessTypeData = createMemo(() => {
-    const data = analytics()?.accessType ?? {};
-    return { labels: Object.keys(data), series: Object.values(data) as number[] };
-  });
-
-	const manufacturerData = createMemo(() => {
-		const counts = analytics()?.manufacturers ?? {};
-    return { labels: Object.keys(counts), series: Object.values(counts) };
-  });
-
-  // ============================================
-  // SECTION 5: Product Class (Horizontal Bar)
-  // ============================================
-	const productClassData = createMemo(() => {
-		const counts = analytics()?.productClasses ?? {};
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
-    return { labels: sorted.map(e => e[0]), series: [{ data: sorted.map(e => e[1]) }] };
-  });
-
-  const productBarOptions = createMemo<ApexOptions>(() => ({
-    chart: { type: 'bar', background: 'transparent', toolbar: { show: false } },
-    plotOptions: {
-      bar: { horizontal: true, borderRadius: 4, barHeight: '50%' }
-    },
-    colors: ['#14b8a6'],
-    dataLabels: {
-      enabled: true,
-      formatter: (val: number) => String(val),
-      style: { fontSize: '11px', colors: ['#fff'] },
-    },
-    xaxis: { labels: { show: false }, axisBorder: { show: false }, axisTicks: { show: false } },
-    yaxis: { labels: { style: { colors: isDark() ? '#a1a1aa' : '#52525b', fontSize: '11px' } } },
-    grid: { show: false },
-    tooltip: { enabled: false },
-  }));
 
   return (
-    <div class="space-y-5">
-      <div class="flex items-end justify-between gap-4">
-        <div><p class="text-[10px] uppercase tracking-[.12em] text-sky-500 font-semibold">Fleet telemetry</p><h2 class="text-xl font-semibold tracking-[-.02em] mt-1">Network overview</h2><p class="text-xs text-muted mt-1">Operational status across every managed CPE.</p></div>
-        <div class="hidden sm:flex items-center gap-2 text-[10px] text-muted"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500" />Live database view</div>
-      </div>
-	  <Show when={(analytics()?.total ?? 0) > (analytics()?.sampled ?? 0)}>
-		<div class="card px-4 py-3 border-amber-500/30 text-amber-400 text-xs">
-		  Analytics charts use the most recent {analytics()?.sampled.toLocaleString()} of {analytics()?.total.toLocaleString()} devices; fleet totals remain exact.
-		</div>
-	  </Show>
-      <Show when={!stats.error} fallback={<div class="card p-4 border-red-500/30 text-red-400 text-xs">Unable to load fleet telemetry. Verify the API and database connection.</div>}>
-      {/* ==================== ROW 1: Hero Stats ==================== */}
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Total Devices - Large Card */}
-        <div class="card p-6 lg:row-span-2">
-          <div class="flex items-start justify-between mb-4">
-            <div>
-              <p class="text-sm font-medium text-muted mb-1">Total Devices</p>
-              <p class="text-5xl font-bold text-primary font-mono tracking-tight">
-                {stats()?.total ?? '-'}
-              </p>
+    <div class="space-y-4">
+      <PageHeader
+        title="Network overview"
+        description="Current fleet reachability, contact recency, health thresholds, and hardware mix."
+        status={<span class="inline-flex items-center gap-2 text-[11px] text-muted"><span class="w-1.5 h-1.5 bg-emerald-500" />Live database view</span>}
+      />
+
+      <Show when={(analytics()?.total ?? 0) > (analytics()?.sampled ?? 0)}>
+        <div class="px-4 py-3 border border-amber-500/30 text-amber-400 text-xs">
+          Analytics use the most recent {analytics()?.sampled.toLocaleString()} of {analytics()?.total.toLocaleString()} devices; fleet totals remain exact.
+        </div>
+      </Show>
+
+      <Show when={!stats.error} fallback={<div class="px-4 py-3 border border-red-500/30 text-red-400 text-xs">Unable to load fleet telemetry. Verify the API and database connection.</div>}>
+        <dl class="ops-register fleet-register" aria-label="Fleet status register">
+          <div class="ops-register-cell">
+            <dt>Managed devices</dt>
+            <dd>{(stats()?.total ?? 0).toLocaleString()}</dd>
+            <small>Registered CPE inventory</small>
+          </div>
+          <div class="ops-register-cell is-online">
+            <dt>Online</dt>
+            <dd>{(stats()?.online ?? 0).toLocaleString()}</dd>
+            <small>Reporting within threshold</small>
+          </div>
+          <div class="ops-register-cell is-offline">
+            <dt>Offline</dt>
+            <dd>{(stats()?.offline ?? 0).toLocaleString()}</dd>
+            <small>Requires operator review</small>
+          </div>
+          <div class="ops-register-cell">
+            <dt>Fleet availability</dt>
+            <dd>{onlinePercent()}%</dd>
+            <small>Online share of inventory</small>
+          </div>
+        </dl>
+
+        <section class="data-panel">
+          <div class="data-panel-header">
+            <div><h2>Contact recency</h2><p>Time elapsed since the latest Inform received from each CPE.</p></div>
+          </div>
+          <div class="data-panel-body">
+            <DistributionList data={analytics()?.lastInform ?? {}} semantic />
+          </div>
+        </section>
+
+        <section class="data-panel">
+          <div class="data-panel-header">
+            <div><h2>Device health distributions</h2><p>Threshold buckets derived from the latest sampled parameter values.</p></div>
+          </div>
+          <div class="dashboard-health-grid">
+            <div class="data-panel-section">
+              <h3>Uptime</h3>
+              <DistributionList data={analytics()?.uptime ?? {}} semantic />
             </div>
-            <div class="p-3 rounded-[4px] bg-sky-500/10">
-              <Activity size={24} class="text-sky-500" />
+            <div class="data-panel-section">
+              <h3>Temperature</h3>
+              <DistributionList data={analytics()?.temperature ?? {}} semantic />
+            </div>
+            <div class="data-panel-section">
+              <h3>Optical RX power</h3>
+              <DistributionList data={analytics()?.rxPower ?? {}} semantic />
             </div>
           </div>
-          
-          {/* Online/Offline Split */}
-          <div class="mt-6 pt-4 border-t border-subtle">
-            <div class="flex items-center gap-6">
-              <div class="flex-1">
-                <div class="flex items-center gap-2 mb-2">
-                  <span class="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span class="text-xs text-muted">Online</span>
-                </div>
-                <p class="text-2xl font-bold text-emerald-500 font-mono">{stats()?.online ?? 0}</p>
-              </div>
-              <div class="w-px h-12 bg-subtle" />
-              <div class="flex-1">
-                <div class="flex items-center gap-2 mb-2">
-                  <span class="w-2 h-2 rounded-full bg-rose-500" />
-                  <span class="text-xs text-muted">Offline</span>
-                </div>
-                <p class="text-2xl font-bold text-rose-500 font-mono">{stats()?.offline ?? 0}</p>
-              </div>
+        </section>
+
+        <section class="data-panel">
+          <div class="data-panel-header">
+            <div><h2>Inventory composition</h2><p>Access technology, manufacturer, and product-class concentration.</p></div>
+          </div>
+          <div class="inventory-grid">
+            <div class="data-panel-section">
+              <h3>Access type</h3>
+              <DistributionList data={analytics()?.accessType ?? {}} limit={6} />
             </div>
-            
-            {/* Progress Bar */}
-            <div class="mt-4">
-              <div class="h-2 rounded-full bg-elevated overflow-hidden">
-                <div 
-                  class="h-full bg-emerald-500 transition-all duration-500"
-                  style={{ width: `${onlinePercent()}%` }}
-                />
-              </div>
-              <p class="text-xs text-muted mt-2">{onlinePercent()}% online</p>
+            <div class="data-panel-section">
+              <h3>Manufacturer</h3>
+              <DistributionList data={analytics()?.manufacturers ?? {}} limit={6} />
+            </div>
+            <div class="data-panel-section">
+              <h3>Product class</h3>
+              <DistributionList data={analytics()?.productClasses ?? {}} limit={6} />
             </div>
           </div>
-        </div>
-
-        {/* Last Inform - Bar Chart */}
-        <div class="card p-5 lg:col-span-2">
-          <div class="flex items-center justify-between mb-3">
-            <div>
-              <h3 class="text-sm font-semibold text-primary">Last Inform</h3>
-              <p class="text-xs text-muted">Time since last device contact</p>
-            </div>
-            <Clock size={18} class="text-muted" />
-          </div>
-          <Show
-            when={lastInformData().series[0]?.data?.some((v: number) => v > 0)}
-            fallback={<div class="h-32 flex items-center justify-center text-muted text-sm">No data</div>}
-          >
-            <SolidApexCharts
-              type="bar"
-              options={{ ...lastInformBarOptions(), xaxis: { ...lastInformBarOptions().xaxis, categories: lastInformData().labels } }}
-              series={lastInformData().series}
-              height={140}
-            />
-          </Show>
-        </div>
-
-        {/* Health Metrics Row - Mini Donut Charts */}
-        <div class="lg:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Uptime Distribution */}
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-primary mb-1">Uptime Distribution</h3>
-            <p class="text-xs text-muted mb-3">Device uptime ranges</p>
-            <Show
-              when={Object.values(analytics()?.uptime ?? {}).some(v => (v as number) > 0)}
-              fallback={<div class="h-32 flex items-center justify-center text-muted text-sm">No data</div>}
-            >
-              <SolidApexCharts
-                type="donut"
-                options={{
-                  ...pieTheme(),
-                  labels: Object.keys(analytics()?.uptime ?? {}),
-                  colors: ['#ef4444', '#f59e0b', '#84cc16', '#10b981'],
-                }}
-                series={Object.values(analytics()?.uptime ?? {}) as number[]}
-                height={140}
-              />
-            </Show>
-          </div>
-
-          {/* Temperature Distribution */}
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-primary mb-1">Temperature</h3>
-            <p class="text-xs text-muted mb-3">Device temperature status</p>
-            <Show
-              when={Object.values(analytics()?.temperature ?? {}).some(v => (v as number) > 0)}
-              fallback={<div class="h-32 flex items-center justify-center text-muted text-sm">No data</div>}
-            >
-              <SolidApexCharts
-                type="donut"
-                options={{
-                  ...pieTheme(),
-                  labels: Object.keys(analytics()?.temperature ?? {}),
-                  colors: ['#10b981', '#f59e0b', '#ef4444'],
-                }}
-                series={Object.values(analytics()?.temperature ?? {}) as number[]}
-                height={140}
-              />
-            </Show>
-          </div>
-
-          {/* RX Power Distribution */}
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-primary mb-1">RX Power</h3>
-            <p class="text-xs text-muted mb-3">Optical signal quality</p>
-            <Show
-              when={Object.values(analytics()?.rxPower ?? {}).some(v => (v as number) > 0)}
-              fallback={<div class="h-32 flex items-center justify-center text-muted text-sm">No data</div>}
-            >
-              <SolidApexCharts
-                type="donut"
-                options={{
-                  ...pieTheme(),
-                  labels: Object.keys(analytics()?.rxPower ?? {}),
-                  colors: ['#ef4444', '#be123c', '#6b7280', '#f59e0b', '#3b82f6'],
-                }}
-                series={Object.values(analytics()?.rxPower ?? {}) as number[]}
-                height={140}
-              />
-            </Show>
-          </div>
-        </div>
-      </div>
-
-      {/* ==================== ROW 2: Categorical + Product Class ==================== */}
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {/* Access Type - Pie */}
-        <div class="card p-5">
-          <h3 class="text-sm font-semibold text-primary mb-1">Access Type</h3>
-          <p class="text-xs text-muted mb-3">Connection technology distribution</p>
-          <Show
-            when={accessTypeData().series.some(v => v > 0)}
-            fallback={<div class="h-40 flex items-center justify-center text-muted text-sm">No data</div>}
-          >
-            <SolidApexCharts
-              type="donut"
-              options={{ ...pieTheme(), labels: accessTypeData().labels, colors: ['#3b82f6', '#06b6d4', '#8b5cf6', '#6b7280'] }}
-              series={accessTypeData().series}
-              height={160}
-            />
-          </Show>
-        </div>
-
-        {/* Manufacturer - Pie */}
-        <div class="card p-5">
-          <h3 class="text-sm font-semibold text-primary mb-1">Manufacturer</h3>
-          <p class="text-xs text-muted mb-3">Device vendor breakdown</p>
-          <Show
-            when={manufacturerData().series.some(v => v > 0)}
-            fallback={<div class="h-40 flex items-center justify-center text-muted text-sm">No data</div>}
-          >
-            <SolidApexCharts
-              type="donut"
-              options={{ ...pieTheme(), labels: manufacturerData().labels, colors: ['#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6'] }}
-              series={manufacturerData().series}
-              height={160}
-            />
-          </Show>
-        </div>
-
-        {/* Product Class - Horizontal Bar */}
-        <div class="card p-5 md:col-span-2 lg:col-span-1">
-          <h3 class="text-sm font-semibold text-primary mb-1">Product Class</h3>
-          <p class="text-xs text-muted mb-3">Top device models</p>
-          <Show
-            when={productClassData().series[0]?.data?.length > 0}
-            fallback={<div class="h-40 flex items-center justify-center text-muted text-sm">No data</div>}
-          >
-            <SolidApexCharts
-              type="bar"
-              options={{ ...productBarOptions(), xaxis: { ...productBarOptions().xaxis, categories: productClassData().labels } }}
-              series={productClassData().series}
-              height={160}
-            />
-          </Show>
-        </div>
-      </div>
+        </section>
       </Show>
     </div>
   );
