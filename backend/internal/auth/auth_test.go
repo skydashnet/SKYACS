@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/models"
 )
 
 type userLookupStub struct {

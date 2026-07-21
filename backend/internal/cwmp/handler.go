@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skydashnet/miniacs/internal/database"
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/database"
+	"github.com/skydashnet/skyacs/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -80,7 +80,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		username, password, ok := r.BasicAuth()
 		if !ok || !secureEqual(username, h.cwmpUsername) || !secureEqual(password, h.cwmpPassword) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="miniACS CWMP"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="SKYACS CWMP"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -780,7 +780,7 @@ func newSessionKey() string {
 func newMessageID() string {
 	value := make([]byte, 12)
 	if _, err := rand.Read(value); err != nil {
-		return fmt.Sprintf("miniacs-%d", time.Now().UnixNano())
+		return fmt.Sprintf("skyacs-%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(value)
 }

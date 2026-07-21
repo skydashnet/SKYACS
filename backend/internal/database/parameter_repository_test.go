@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/models"
 )
 
 func TestSensitiveParameterEncryptionRoundTrip(t *testing.T) {

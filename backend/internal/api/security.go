@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skydashnet/miniacs/internal/auth"
-	"github.com/skydashnet/miniacs/internal/database"
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/auth"
+	"github.com/skydashnet/skyacs/internal/database"
+	"github.com/skydashnet/skyacs/internal/models"
 )
 
 const (
@@ -99,7 +99,7 @@ func clientIP(req *http.Request) string {
 	remoteIP := net.ParseIP(host)
 	if remoteIP != nil && isTrustedProxy(remoteIP) {
 		forwarded := strings.Split(req.Header.Get("X-Forwarded-For"), ",")
-		// Walk from the proxy nearest to miniACS toward the client. This
+		// Walk from the proxy nearest to SKYACS toward the client. This
 		// discards trusted hops without accepting a spoofed left-most value.
 		for index := len(forwarded) - 1; index >= 0; index-- {
 			candidate := strings.TrimSpace(forwarded[index])

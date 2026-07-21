@@ -25,8 +25,8 @@ ingress:
 ```
 
 ```bash
-cloudflared tunnel route dns miniacs acs.example.com
-cloudflared tunnel route dns miniacs cwmp.example.com
+cloudflared tunnel route dns skyacs acs.example.com
+cloudflared tunnel route dns skyacs cwmp.example.com
 sudo cloudflared service install
 sudo systemctl enable --now cloudflared
 ```
@@ -37,7 +37,7 @@ Cloudflare Access normally requires an interactive browser session. A CPE cannot
 
 Choose one controlled route:
 
-1. Create a separate hostname for `/files/...` without Access, proxy only that path to miniACS, and keep the signed token plus HTTPS protection.
+1. Create a separate hostname for `/files/...` without Access, proxy only that path to SKYACS, and keep the signed token plus HTTPS protection.
 2. Publish the signed firmware endpoint through a tightly scoped direct reverse proxy reachable only from CPE networks.
 
 Set `firmware_base_url` to that reachable base URL. Never expose the full authenticated API merely to make firmware downloads work.

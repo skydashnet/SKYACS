@@ -1,6 +1,6 @@
 # Nginx deployment
 
-Contoh ini menyajikan frontend statis, meneruskan `/api/` ke API miniACS, dan menempatkan CWMP pada hostname TLS terpisah.
+Contoh ini menyajikan frontend statis, meneruskan `/api/` ke API SKYACS, dan menempatkan CWMP pada hostname TLS terpisah.
 
 ```nginx
 server {
@@ -12,7 +12,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     server_tokens off;
 
-    root /opt/miniacs/frontend/dist;
+    root /opt/skyacs/frontend/dist;
     index index.html;
     client_max_body_size 64m;
 
@@ -104,5 +104,5 @@ Validasi dan reload:
 sudo nginx -t
 sudo systemctl reload nginx
 curl https://acs.example.com/api/health
-sudo systemctl status miniacs miniacs-web
+sudo systemctl status skyacs skyacs-web
 ```

@@ -38,7 +38,7 @@ const Brand = () => (
       <span /><span /><span />
     </div>
     <div>
-      <div class="brand-name">miniACS</div>
+      <div class="brand-name">SKYACS</div>
       <div class="brand-subtitle">Independent CWMP control plane</div>
     </div>
   </div>
@@ -112,7 +112,7 @@ const Layout: ParentComponent = (props) => {
           <div class="topbar-title">
             <button class="icon-button lg:hidden" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
             <div>
-              <p>miniACS <span>/</span></p>
+              <p>SKYACS <span>/</span></p>
               <h1>{pageTitle()}</h1>
             </div>
           </div>

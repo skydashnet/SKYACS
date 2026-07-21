@@ -4,7 +4,7 @@ type Theme = 'dark' | 'light';
 
 const getInitialTheme = (): Theme => {
   if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('miniacs-theme');
+    const stored = localStorage.getItem('skyacs-theme');
     if (stored === 'light' || stored === 'dark') return stored;
     if (window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
   }
@@ -15,7 +15,7 @@ const [theme, setThemeSignal] = createSignal<Theme>(getInitialTheme());
 
 const applyTheme = (currentTheme: Theme) => {
   document.documentElement.setAttribute('data-theme', currentTheme);
-  localStorage.setItem('miniacs-theme', currentTheme);
+  localStorage.setItem('skyacs-theme', currentTheme);
 };
 
 if (typeof document !== 'undefined') applyTheme(theme());

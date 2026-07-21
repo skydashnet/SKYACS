@@ -35,11 +35,11 @@ const Login: Component = () => {
       <section class="hidden lg:flex flex-col justify-between p-12 border-r border-subtle bg-surface">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-          <div><div class="brand-name">miniACS</div><div class="brand-subtitle">Independent CWMP control plane</div></div>
+          <div><div class="brand-name">SKYACS</div><div class="brand-subtitle">Independent CWMP control plane</div></div>
         </div>
 
         <div class="max-w-2xl">
-          <p class="login-kicker">miniACS / independent ACS runtime</p>
+          <p class="login-kicker">SKYACS / independent ACS runtime</p>
           <h1 class="text-4xl xl:text-5xl font-semibold tracking-[-.035em] text-primary leading-[1.08]">
             CWMP operations, without the middleware.
           </h1>
@@ -62,7 +62,7 @@ const Login: Component = () => {
         <div class="h-16 flex items-center justify-between px-5 lg:px-8 border-b border-subtle">
           <div class="brand-lockup lg:hidden">
             <div class="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-            <div><div class="brand-name">miniACS</div><div class="brand-subtitle">CWMP control plane</div></div>
+            <div><div class="brand-name">SKYACS</div><div class="brand-subtitle">CWMP control plane</div></div>
           </div>
           <span class="hidden lg:block text-[11px] text-muted">Operator authentication</span>
           <button class="icon-button" onClick={toggleTheme} aria-label="Toggle theme">{isDark() ? <Sun size={17} /> : <Moon size={17} />}</button>
@@ -71,7 +71,7 @@ const Login: Component = () => {
         <div class="flex-1 flex items-center justify-center px-5 py-10">
           <div class="w-full max-w-[390px]">
             <h2 class="text-2xl font-semibold tracking-[-.025em] text-primary">Operator sign in</h2>
-            <p class="text-sm text-muted mt-2">Use your miniACS control-plane credentials.</p>
+            <p class="text-sm text-muted mt-2">Use your SKYACS control-plane credentials.</p>
 
             <Show when={error()}>
               <div role="alert" class="mt-6 px-3 py-2.5 border border-red-500/30 bg-red-500/8 rounded-[3px] text-xs text-red-400">{error()}</div>

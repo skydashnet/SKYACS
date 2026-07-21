@@ -11,7 +11,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/models"
 )
 
 var (
@@ -23,8 +23,8 @@ type contextKey string
 const UserContextKey contextKey = "user"
 
 const (
-	jwtIssuer         = "miniacs"
-	jwtAudience       = "miniacs-web"
+	jwtIssuer         = "skyacs"
+	jwtAudience       = "skyacs-web"
 	minSecretLength   = 32
 	minPasswordLength = 12
 	maxPasswordLength = 72

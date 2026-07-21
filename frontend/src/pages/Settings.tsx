@@ -337,7 +337,7 @@ const Settings: Component = () => {
           Delivery & Connection Request
         </h2>
         <p class="text-muted text-xs mb-4">
-          Firmware delivery URL dan kredensial yang dipakai miniACS untuk memanggil CPE.
+          Firmware delivery URL dan kredensial yang dipakai SKYACS untuk memanggil CPE.
         </p>
 
         <Show when={!settings.loading} fallback={
@@ -453,7 +453,7 @@ const Settings: Component = () => {
           CPE Configuration Guide
         </h2>
         <div class="text-muted text-xs space-y-2">
-          <p>Untuk connect CPE device ke miniACS:</p>
+          <p>Untuk connect CPE device ke SKYACS:</p>
           <ol class="list-decimal list-inside space-y-1 ml-2">
             <li>Login ke CPE web interface</li>
             <li>Cari menu TR-069 atau CWMP settings</li>

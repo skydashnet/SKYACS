@@ -2,10 +2,10 @@
 .env
 .env.local
 .env.*.local
-.miniacs.env
+.skyacs.env
 
 # Backend
-backend/miniacs
+backend/skyacs
 backend/tmp/
 *.exe
 *.exe~

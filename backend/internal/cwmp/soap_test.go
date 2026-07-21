@@ -11,7 +11,7 @@ func TestParseSOAPAcceptsCWMP12AndDetectsTransferComplete(t *testing.T) {
 	payload := `<?xml version="1.0"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:cwmp="urn:dslforum-org:cwmp-1-2">
   <soap:Header><cwmp:ID soap:mustUnderstand="1">request-42</cwmp:ID></soap:Header>
-  <soap:Body><cwmp:TransferComplete><CommandKey>miniacs-task-9</CommandKey><FaultStruct><FaultCode>0</FaultCode><FaultString></FaultString></FaultStruct><StartTime>2026-01-01T00:00:00Z</StartTime><CompleteTime>2026-01-01T00:01:00Z</CompleteTime></cwmp:TransferComplete></soap:Body>
+  <soap:Body><cwmp:TransferComplete><CommandKey>skyacs-task-9</CommandKey><FaultStruct><FaultCode>0</FaultCode><FaultString></FaultString></FaultStruct><StartTime>2026-01-01T00:00:00Z</StartTime><CompleteTime>2026-01-01T00:01:00Z</CompleteTime></cwmp:TransferComplete></soap:Body>
 </soap:Envelope>`
 	envelope, err := ParseSOAPEnvelope(strings.NewReader(payload))
 	if err != nil {
@@ -51,7 +51,7 @@ func TestSetParameterValuesIncludesSOAPTypesAndArrayMetadata(t *testing.T) {
 		ParameterList: ParameterList{Parameters: []ParameterValueStruct{
 			{Name: "Device.ManagementServer.PeriodicInformEnable", Value: "true", Type: "boolean"},
 		}},
-		ParameterKey: "miniacs-task-10",
+		ParameterKey: "skyacs-task-10",
 	}
 	encoded, err := GenerateSOAPEnvelopeWithContext(request, CWMPNamespace10, "command-10")
 	if err != nil {

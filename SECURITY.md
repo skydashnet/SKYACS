@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes are applied to the latest revision on the default branch while miniACS remains in beta.
+Security fixes are applied to the latest revision on the default branch while SKYACS remains in beta.
 
 ## Report a vulnerability
 

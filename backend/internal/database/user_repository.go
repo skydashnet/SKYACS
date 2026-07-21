@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/models"
 	"gorm.io/gorm"
 )
 

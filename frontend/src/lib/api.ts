@@ -29,10 +29,10 @@ export interface ProvisioningRule { id: number; parameter_name: string; paramete
 export interface AuditLog { id: number; user_id?: number; username: string; action: string; resource: string; status: number; ip_address: string; user_agent?: string; created_at: string }
 export interface BlockedDevice { id: number; serial_number: string; reason: string; created_by: string; created_at: string }
 
-export const getStoredToken = () => sessionStorage.getItem('miniacs_token');
+export const getStoredToken = () => sessionStorage.getItem('skyacs_token');
 
 export const clearStoredSession = () => {
-  sessionStorage.removeItem('miniacs_token');
+  sessionStorage.removeItem('skyacs_token');
   localStorage.removeItem('token');
 };
 

@@ -6,10 +6,10 @@ DB_HOST="${SETUP_DB_HOST:-localhost}"
 DB_PORT="${SETUP_DB_PORT:-5432}"
 DB_ADMIN_USER="${SETUP_DB_USER:-postgres}"
 DB_ADMIN_PASSWORD="${SETUP_DB_PASSWORD:-}"
-APP_DB="miniacs"
-APP_USER="miniacs"
+APP_DB="skyacs"
+APP_USER="skyacs"
 ENV_FILE="$ROOT_DIR/backend/.env"
-CORS_ORIGINS="${MINIACS_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+CORS_ORIGINS="${SKYACS_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
 
 if [[ "$DB_HOST" == "localhost" && ${EUID} -eq 0 ]] && id postgres >/dev/null 2>&1; then
   PSQL=(runuser -u postgres -- psql -v ON_ERROR_STOP=1)
@@ -17,7 +17,7 @@ else
   PSQL=(env "PGPASSWORD=$DB_ADMIN_PASSWORD" psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_ADMIN_USER")
 fi
 
-echo "miniACS database setup"
+echo "SKYACS database setup"
 if [[ "$("${PSQL[@]}" -tAc "SELECT 1 FROM pg_database WHERE datname = '$APP_DB'")" == "1" ]]; then
   if [[ -f "$ENV_FILE" ]]; then
     if ! grep -q '^JWT_SECRET=' "$ENV_FILE"; then
@@ -36,8 +36,8 @@ if [[ "$("${PSQL[@]}" -tAc "SELECT 1 FROM pg_database WHERE datname = '$APP_DB'"
       printf 'CONNECTION_REQUEST_ALLOWED_CIDRS=\n' >>"$ENV_FILE"
     fi
     chmod 600 "$ENV_FILE"
-    if [[ -n "${MINIACS_SERVICE_USER:-}" ]]; then
-      chown "$MINIACS_SERVICE_USER":"$MINIACS_SERVICE_USER" "$ENV_FILE"
+    if [[ -n "${SKYACS_SERVICE_USER:-}" ]]; then
+      chown "$SKYACS_SERVICE_USER":"$SKYACS_SERVICE_USER" "$ENV_FILE"
     fi
     echo "Database and backend/.env already exist; existing credentials were preserved."
     exit 0
@@ -49,7 +49,7 @@ fi
 APP_PASSWORD="$(openssl rand -hex 24)"
 JWT_SECRET="$(openssl rand -hex 32)"
 PARAMETER_ENCRYPTION_KEY="$(openssl rand -hex 32)"
-INITIAL_ADMIN_PASSWORD="MiniACS-$(openssl rand -hex 12)"
+INITIAL_ADMIN_PASSWORD="SKYACS-$(openssl rand -hex 12)"
 
 if [[ "$("${PSQL[@]}" -tAc "SELECT 1 FROM pg_roles WHERE rolname = '$APP_USER'")" != "1" ]]; then
   "${PSQL[@]}" -c "CREATE USER $APP_USER WITH PASSWORD '$APP_PASSWORD'"
@@ -85,8 +85,8 @@ CONNECTION_REQUEST_ALLOWED_CIDRS=
 FIRMWARE_UPLOAD_DIR=./uploads/firmware
 EOF
 
-if [[ -n "${MINIACS_SERVICE_USER:-}" ]]; then
-  chown "$MINIACS_SERVICE_USER":"$MINIACS_SERVICE_USER" "$ENV_FILE"
+if [[ -n "${SKYACS_SERVICE_USER:-}" ]]; then
+  chown "$SKYACS_SERVICE_USER":"$SKYACS_SERVICE_USER" "$ENV_FILE"
 fi
 
 echo "Database created and backend/.env secured with mode 0600."

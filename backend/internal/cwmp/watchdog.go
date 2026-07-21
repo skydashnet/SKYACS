@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/skydashnet/miniacs/internal/database"
-	"github.com/skydashnet/miniacs/internal/models"
-	"github.com/skydashnet/miniacs/internal/netutil"
+	"github.com/skydashnet/skyacs/internal/database"
+	"github.com/skydashnet/skyacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/netutil"
 	"gorm.io/gorm"
 )
 

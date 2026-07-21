@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/skydashnet/miniacs/internal/api"
-	"github.com/skydashnet/miniacs/internal/auth"
-	"github.com/skydashnet/miniacs/internal/cwmp"
-	"github.com/skydashnet/miniacs/internal/database"
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/api"
+	"github.com/skydashnet/skyacs/internal/auth"
+	"github.com/skydashnet/skyacs/internal/cwmp"
+	"github.com/skydashnet/skyacs/internal/database"
+	"github.com/skydashnet/skyacs/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -33,8 +33,8 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found; using process environment")
 	}
-	if err := godotenv.Load(".miniacs.env"); err != nil {
-		log.Println("No .miniacs.env file found")
+	if err := godotenv.Load(".skyacs.env"); err != nil {
+		log.Println("No .skyacs.env file found")
 	}
 	if err := auth.ConfigureJWT(os.Getenv("JWT_SECRET")); err != nil {
 		log.Fatalf("Security configuration error: %v", err)
@@ -123,14 +123,14 @@ func main() {
 	go watchdog.Start(ctx)
 
 	go func() {
-		log.Printf("miniACS CWMP server listening on %s", cwmpServer.Addr)
+		log.Printf("SKYACS CWMP server listening on %s", cwmpServer.Addr)
 		if err := cwmpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("CWMP server failed: %v", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("miniACS API server listening on %s", apiServer.Addr)
+		log.Printf("SKYACS API server listening on %s", apiServer.Addr)
 		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("API server failed: %v", err)
 		}
@@ -430,5 +430,5 @@ func generateBootstrapPassword() string {
 	if _, err := rand.Read(buffer); err != nil {
 		panic(fmt.Sprintf("cannot generate bootstrap password: %v", err))
 	}
-	return "MiniACS-" + hex.EncodeToString(buffer)
+	return "SKYACS-" + hex.EncodeToString(buffer)
 }

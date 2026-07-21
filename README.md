@@ -1,84 +1,82 @@
 <div align="center">
 
-<h1>miniACS</h1>
+<h1>SKYACS</h1>
 
 <p><strong>Independent TR-069/CWMP control plane for managed CPE fleets</strong></p>
 
-[![Version](https://img.shields.io/badge/version-1.2.0-0EA5E9?style=for-the-badge)](https://github.com/skydashnet/miniACS)
-[![CI](https://img.shields.io/github/actions/workflow/status/skydashnet/miniACS/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](https://github.com/skydashnet/miniACS/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-2.0.0-0EA5E9?style=for-the-badge)](https://github.com/skydashnet/SKYACS)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-2563EB?style=for-the-badge)](LICENSE)
-[![Saweria](https://img.shields.io/badge/Saweria-Dukung%20miniACS-FAAE2B?style=for-the-badge)](https://saweria.co/skydashnet)
+[![Saweria](https://img.shields.io/badge/Saweria-Support%20SKYACS-FAAE2B?style=for-the-badge)](https://saweria.co/skydashnet)
 
 </div>
 
-miniACS adalah control plane TR-069/CWMP mandiri untuk inventarisasi, monitoring, provisioning, dan konfigurasi CPE. Backend CWMP, API, scheduler, database, dan web console berjalan langsung di miniACS; instalasi tidak membutuhkan GenieACS.
+SKYACS is a standalone TR-069/CWMP control plane for CPE inventory, monitoring, provisioning, and configuration. Its CWMP server, management API, scheduler, database layer, and web console run as one independent platform without requiring GenieACS.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="miniACS network overview dashboard" width="1280" />
+  <img src="docs/screenshots/dashboard.png" alt="SKYACS network overview dashboard" width="1280" />
   <br />
   <sub>Network overview with representative lab telemetry.</sub>
 </p>
 
-> Status: beta. Uji di lab dan siapkan jalur recovery perangkat sebelum menjalankan perubahan massal atau firmware upgrade.
+> **Project status:** Beta. Validate every device workflow in a lab and maintain a recovery path before running bulk configuration changes or firmware upgrades.
 
 ## Highlights
 
-- TR-098 (`InternetGatewayDevice`) dan TR-181 (`Device`) data-model discovery
-- Inventaris, statistik, parameter tree, fault, provisioning rule, dan task history
-- Get/Set parameter, reboot, factory reset, connection request, serta firmware delivery
-- Full/read-only role, revocable session-only web token, password policy, login throttling, dan audit trail
-- Device blocklist, CWMP Basic Auth over TLS, allowlist CIDR, dan trusted-proxy validation
-- DNS-rebinding/redirect-resistant SSRF guard untuk connection request URL
-- Signed firmware URL dengan token acak dan expiry; task firmware kedaluwarsa setelah 24 jam
-- Enkripsi AES-GCM untuk parameter sensitif di database dan masking untuk operator read-only
-- Responsive enterprise console menggunakan IBM Plex Sans dan IBM Plex Mono
-- Dark/light theme tanpa dependency font atau UI dari GenieACS
+- TR-098 (`InternetGatewayDevice`) and TR-181 (`Device`) data-model discovery
+- Device inventory, fleet statistics, parameter trees, faults, provisioning rules, and task history
+- Get/Set parameter operations, reboot, factory reset, connection requests, and firmware delivery
+- Full-access and read-only roles with revocable session-scoped tokens
+- Password policy, login throttling, audit logging, and device admission blocklist
+- CWMP Basic Authentication over TLS, CIDR allowlists, and trusted-proxy validation
+- DNS-rebinding and redirect-resistant SSRF protection for connection request URLs
+- Signed firmware URLs with random tokens and expiry; firmware tasks expire after 24 hours
+- AES-GCM encryption for sensitive parameters and masking for read-only operators
+- Responsive operational console built with IBM Plex Sans and IBM Plex Mono
+- System-aware dark and light themes with no UI dependency on another ACS platform
 
-Implementasi full-root parameter discovery dan metadata writable mengadaptasi pola yang sudah dipakai pada miniACS di `skydash-netsh`. Struktur provisioning terinspirasi oleh katalog pada `skydashnet/genieacs-installer`, tetapi diterapkan langsung ke task engine miniACS.
+## Architecture
 
-## Arsitektur
-
-| Service | Default | Fungsi |
+| Service | Default port | Purpose |
 | --- | ---: | --- |
 | Web console | `5173/tcp` | SolidJS production bundle |
-| API | `7548/tcp` | Authenticated management API dan signed firmware files |
-| CWMP | `7547/tcp` | Session TR-069 dari CPE |
-| PostgreSQL | `5432/tcp` | Persistent state |
+| Management API | `7548/tcp` | Authenticated API and signed firmware delivery |
+| CWMP | `7547/tcp` | TR-069 sessions from managed CPEs |
+| PostgreSQL | `5432/tcp` | Persistent operational state |
 
-Backend menggunakan Go 1.25, GORM, dan PostgreSQL. Frontend menggunakan SolidJS, TypeScript, Tailwind CSS, dan Vite.
+The backend uses Go 1.25, GORM, and PostgreSQL. The frontend uses SolidJS, TypeScript, Tailwind CSS, and Vite.
 
 ## Quick start
 
-### Automated install (Debian/Ubuntu)
+### Automated installation on Debian or Ubuntu
 
 ```bash
-git clone https://github.com/skydashnet/miniACS.git
-cd miniACS
+git clone https://github.com/skydashnet/SKYACS.git
+cd SKYACS
 chmod +x auto-setup.sh
 sudo ./auto-setup.sh
 ```
 
-Installer membuat database, secret, build produksi, dan dua unit systemd: `miniacs` serta `miniacs-web`. Password bootstrap dicetak sekali dan juga dapat dilihat pada startup pertama dengan:
+The installer provisions PostgreSQL, generates application secrets, builds the production artifacts, and installs the `skyacs` and `skyacs-web` systemd units. The bootstrap password is printed once and can also be retrieved from the initial service logs:
 
 ```bash
-sudo journalctl -u miniacs -n 50 --no-pager
+sudo journalctl -u skyacs -n 50 --no-pager
 ```
 
-### Manual development
+### Manual development setup
 
 ```bash
 cp backend/.env.example backend/.env
-# edit backend/.env; JWT_SECRET dan PARAMETER_ENCRYPTION_KEY wajib diisi
+# Edit backend/.env. JWT_SECRET and PARAMETER_ENCRYPTION_KEY are required.
 ./setup.sh
 
 cd backend
 go run ./cmd/server
 ```
 
-Pada terminal lain:
+Start the frontend in another terminal:
 
 ```bash
 cd frontend
@@ -86,11 +84,11 @@ npm ci
 npm run dev
 ```
 
-Login awal memakai username `admin`. Password berasal dari `INITIAL_ADMIN_PASSWORD`; jika variabel itu kosong, backend mencetak password acak sekali saat membuat user pertama. Tidak ada default `admin/admin`.
+The initial username is `admin`. Its password is read from `INITIAL_ADMIN_PASSWORD`; when that variable is empty, the backend generates and prints a random password once while creating the first operator. SKYACS does not ship with an `admin/admin` credential.
 
-## Konfigurasi keamanan
+## Security configuration
 
-Variabel penting di `backend/.env`:
+Important variables in `backend/.env`:
 
 ```env
 PORT=7547
@@ -102,8 +100,8 @@ PARAMETER_ENCRYPTION_KEY=<minimum-32-random-characters>
 
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=miniacs
-DB_USER=miniacs
+DB_NAME=skyacs
+DB_USER=skyacs
 DB_PASSWORD=<database-password>
 DB_MAX_OPEN_CONNS=50
 DB_MAX_IDLE_CONNS=10
@@ -115,43 +113,43 @@ CWMP_PASSWORD=
 CWMP_ALLOWED_CIDRS=10.0.0.0/8,192.0.2.0/24
 CWMP_TRUSTED_PROXY_CIDRS=127.0.0.1/32
 CONNECTION_REQUEST_ALLOWED_CIDRS=10.0.0.0/8,192.0.2.0/24
-FIRMWARE_UPLOAD_DIR=/var/lib/miniacs/firmware
+FIRMWARE_UPLOAD_DIR=/var/lib/skyacs/firmware
 ALLOW_INSECURE_FIRMWARE_URL=false
 ```
 
-Atur dari **Settings** setelah login:
+Configure these values from **Settings** after signing in:
 
-- `firmware_base_url`: base URL API yang dapat dijangkau CPE, contoh `https://acs.example.com/api` bila Nginx memakai prefix `/api`.
-- connection request credentials; mode otomatis membutuhkan master secret minimum 16 karakter dan menghasilkan password HMAC-SHA256 unik per serial number.
+- `firmware_base_url`: the API base URL reachable by managed CPEs, for example `https://acs.example.com/api` when Nginx exposes the API under `/api`.
+- Connection request credentials. Automatic mode requires a master secret of at least 16 characters and derives a unique HMAC-SHA256 password for every serial number.
 
-Jika `CWMP_USERNAME` digunakan, `CWMP_PASSWORD` juga wajib diset. Basic Auth ditolak pada HTTP biasa: terminasi TLS harus berasal dari alamat pada `CWMP_TRUSTED_PROXY_CIDRS`. `TRUSTED_PROXY_CIDRS` mengontrol header client-IP API dan harus berisi alamat proxy saja, bukan jaringan pengguna. `CONNECTION_REQUEST_ALLOWED_CIDRS` membatasi alamat tujuan yang boleh dipanggil ACS dan sebaiknya diisi jaringan CPE. Batasi endpoint CWMP ke jaringan CPE memakai firewall meskipun allowlist aplikasi sudah aktif.
+When `CWMP_USERNAME` is configured, `CWMP_PASSWORD` is also required. Basic Authentication is rejected over plain HTTP; TLS termination must originate from an address in `CWMP_TRUSTED_PROXY_CIDRS`. `TRUSTED_PROXY_CIDRS` controls API client-IP headers and must contain proxy addresses only. `CONNECTION_REQUEST_ALLOWED_CIDRS` restricts the destinations that SKYACS may contact and should contain CPE networks. Protect the CWMP endpoint with network firewall rules even when the application allowlist is enabled.
 
-`PARAMETER_ENCRYPTION_KEY` mengenkripsi password dan parameter sensitif yang tersimpan. Backup key bersama backup database dan jangan menggantinya langsung; rotasi key memerlukan migrasi/re-enkripsi data.
+`PARAMETER_ENCRYPTION_KEY` protects stored passwords and sensitive parameters. Back up this key together with the database. Do not replace it directly; key rotation requires a data migration and re-encryption process.
 
 ## Reverse proxy
 
-Gunakan [setup_nginx.md](setup_nginx.md) untuk TLS, static frontend, API prefix, dan firmware upload limit. Untuk deployment melalui Cloudflare, baca [setup_cloudflare.md](setup_cloudflare.md); endpoint firmware harus tetap dapat dijangkau CPE tanpa interactive Access login.
+Use [setup_nginx.md](setup_nginx.md) for TLS termination, static frontend delivery, the API prefix, and firmware upload limits. For deployments using Cloudflare, read [setup_cloudflare.md](setup_cloudflare.md). Firmware endpoints must remain reachable by managed CPEs without an interactive Access login.
 
 ## Production baseline
 
-Sebelum membawa miniACS ke jaringan operasional:
+Before deploying SKYACS into an operational network:
 
-1. Pasang TLS reverse proxy untuk web/API dan CWMP; jangan expose `5173` atau `7548` langsung.
-2. Isi CORS dan trusted proxy dengan nilai eksplisit, lalu batasi CWMP menggunakan firewall/CIDR.
-3. Gunakan user service non-root, aktifkan backup PostgreSQL dan direktori firmware, serta uji restore.
-4. Uji Get/Set, reboot, factory reset, dan firmware pada setiap kombinasi vendor/model/version. Factory reset membutuhkan re-authentication akun.
-5. Monitor `/api/health`, systemd, kapasitas database, disk firmware, serta task/fault yang gagal.
+1. Terminate TLS for the web console, API, and CWMP endpoint. Never expose ports `5173` or `7548` directly.
+2. Configure explicit CORS and trusted-proxy values, then restrict CWMP access with firewall and CIDR rules.
+3. Run services under a non-root account, back up PostgreSQL and firmware storage, and test restoration.
+4. Validate Get/Set, reboot, factory reset, and firmware delivery for every vendor, model, and firmware combination. Factory reset requires operator re-authentication.
+5. Monitor `/api/health`, systemd state, database capacity, firmware storage, and failed tasks or faults.
 
-Contoh backup single-node:
+Example single-node backup:
 
 ```bash
-sudo -u postgres pg_dump -Fc miniacs > miniacs-$(date +%F).dump
-sudo tar -C /var/lib/miniacs -czf miniacs-firmware-$(date +%F).tar.gz firmware
+sudo -u postgres pg_dump -Fc skyacs > skyacs-$(date +%F).dump
+sudo tar -C /var/lib/skyacs -czf skyacs-firmware-$(date +%F).tar.gz firmware
 ```
 
-miniACS saat ini adalah control plane **single-node**. Storage firmware lokal dan scheduler in-process belum dirancang untuk active-active/HA; gunakan satu instance backend per database. Status proyek tetap beta sampai matriks interoperabilitas vendor dan uji beban fleet dipublikasikan.
+SKYACS currently operates as a **single-node control plane**. Local firmware storage and the in-process scheduler are not designed for active-active or high-availability deployments. Run one backend instance per database. The project remains in beta until a public vendor interoperability matrix and fleet load-test results are available.
 
-## Validasi
+## Validation
 
 ```bash
 cd backend
@@ -170,26 +168,26 @@ cd ..
 bash -n setup.sh auto-setup.sh
 ```
 
-CI menjalankan rangkaian yang sama pada setiap push dan pull request.
+The CI workflow runs the same checks on every push and pull request.
 
-## Dukungan perangkat
+## Device support
 
-miniACS menangani perangkat yang mematuhi CWMP/TR-069 dengan root TR-098 atau TR-181. Vendor extension tetap berbeda antar firmware; selalu verifikasi parameter writable di lab. Profil UI saat ini mengenali pola umum Huawei, ZTE, dan FiberHome, tetapi kompatibilitas tidak dijamin untuk setiap versi firmware.
+SKYACS supports CPEs that implement CWMP/TR-069 with a TR-098 or TR-181 root. Vendor extensions vary across firmware releases, so always verify writable parameters in a lab. The console recognizes common Huawei, ZTE, and FiberHome parameter patterns, but compatibility is not guaranteed for every firmware version.
 
-RPC yang saat ini ditangani meliputi `Inform`, `TransferComplete`, SOAP Fault, serta response untuk `GetParameterValues`, `GetParameterNames`, `SetParameterValues`, `Reboot`, `FactoryReset`, dan `Download`. Method di luar matriks tersebut menerima CWMP fault `8000` dan harus diuji sebelum perangkat yang bergantung padanya dimasukkan ke fleet produksi.
+The currently handled RPCs include `Inform`, `TransferComplete`, SOAP Fault, and responses for `GetParameterValues`, `GetParameterNames`, `SetParameterValues`, `Reboot`, `FactoryReset`, and `Download`. Methods outside this matrix receive CWMP fault `8000` and must be validated before onboarding devices that depend on them.
 
-## Dukung miniACS
+## Support SKYACS
 
-Jika miniACS membantu operasional jaringanmu, dukung pengembangan dan pemeliharaan proyek ini melalui Saweria.
+If SKYACS helps your network operations, support its continued development and maintenance through Saweria.
 
 <p align="center">
-  <a href="https://saweria.co/skydashnet"><img src="https://img.shields.io/badge/Saweria-Dukung%20miniACS-FAAE2B?style=for-the-badge" alt="Dukung miniACS di Saweria" /></a>
+  <a href="https://saweria.co/skydashnet"><img src="https://img.shields.io/badge/Saweria-Support%20SKYACS-FAAE2B?style=for-the-badge" alt="Support SKYACS on Saweria" /></a>
 </p>
 
 ## Reporting security issues
 
-Jangan membuka detail kerentanan yang belum ditangani sebagai public issue. Ikuti proses pada [SECURITY.md](SECURITY.md).
+Do not disclose unresolved vulnerabilities through a public issue. Follow the process documented in [SECURITY.md](SECURITY.md).
 
 ## License
 
-GNU Affero General Public License v3.0. Lihat [LICENSE](LICENSE).
+GNU Affero General Public License v3.0. See [LICENSE](LICENSE).

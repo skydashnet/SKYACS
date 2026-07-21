@@ -1,4 +1,4 @@
-module github.com/skydashnet/miniacs
+module github.com/skydashnet/skyacs
 
 go 1.25.0
 

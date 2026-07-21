@@ -25,7 +25,7 @@ const defaultColumns: ColumnConfig[] = [
   { id: 'last_inform', label: 'Last Inform', visible: true, order: 8 },
 ];
 
-const STORAGE_KEY = 'miniacs_device_columns';
+const STORAGE_KEY = 'skyacs_device_columns';
 
 const TableSkeleton: Component<{ cols: number }> = (props) => (
   <tr>

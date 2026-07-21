@@ -7,15 +7,15 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_USER="${MINIACS_SERVICE_USER:-${SUDO_USER:-}}"
+SERVICE_USER="${SKYACS_SERVICE_USER:-${SUDO_USER:-}}"
 GO_VERSION="${GO_VERSION:-1.25.0}"
 
 if [[ -z "$SERVICE_USER" || "$SERVICE_USER" == "root" ]] || ! id "$SERVICE_USER" >/dev/null 2>&1; then
-  echo "A valid non-root service user is required. Run with sudo from that user or set MINIACS_SERVICE_USER." >&2
+  echo "A valid non-root service user is required. Run with sudo from that user or set SKYACS_SERVICE_USER." >&2
   exit 1
 fi
 
-echo "miniACS production installer"
+echo "SKYACS production installer"
 echo "Project: ${ROOT_DIR}"
 
 apt-get update -qq
@@ -38,16 +38,16 @@ if [[ "$install_go" == true ]]; then
   esac
   go_archive="go${GO_VERSION}.linux-${go_arch}.tar.gz"
   go_url="https://go.dev/dl/${go_archive}"
-  curl -fsSL "$go_url" -o /tmp/miniacs-go.tar.gz
+  curl -fsSL "$go_url" -o /tmp/skyacs-go.tar.gz
   expected_checksum="$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' | jq -r --arg file "$go_archive" '.[] | .files[] | select(.filename == $file) | .sha256' | head -n1)"
   if [[ ! "$expected_checksum" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Unable to retrieve the official Go archive checksum." >&2
     exit 1
   fi
-  printf '%s  %s\n' "$expected_checksum" /tmp/miniacs-go.tar.gz | sha256sum --check --status
+  printf '%s  %s\n' "$expected_checksum" /tmp/skyacs-go.tar.gz | sha256sum --check --status
   rm -rf /usr/local/go
-  tar -C /usr/local -xzf /tmp/miniacs-go.tar.gz
-  rm -f /tmp/miniacs-go.tar.gz
+  tar -C /usr/local -xzf /tmp/skyacs-go.tar.gz
+  rm -f /tmp/skyacs-go.tar.gz
 fi
 export PATH="/usr/local/go/bin:${PATH}"
 
@@ -62,11 +62,11 @@ fi
 
 cd "$ROOT_DIR"
 chmod +x setup.sh
-export MINIACS_SERVICE_USER="$SERVICE_USER"
+export SKYACS_SERVICE_USER="$SERVICE_USER"
 ./setup.sh
 
 cd "$ROOT_DIR/backend"
-go build -trimpath -ldflags="-s -w" -o miniacs ./cmd/server
+go build -trimpath -ldflags="-s -w" -o skyacs ./cmd/server
 
 cd "$ROOT_DIR/frontend"
 npm ci --no-audit --no-fund
@@ -77,9 +77,9 @@ SERVE_BIN="$(command -v serve)"
 mkdir -p "$ROOT_DIR/backend/uploads/firmware"
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$ROOT_DIR/backend/uploads"
 
-cat >/etc/systemd/system/miniacs.service <<EOF
+cat >/etc/systemd/system/skyacs.service <<EOF
 [Unit]
-Description=miniACS control plane and CWMP server
+Description=SKYACS control plane and CWMP server
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -88,7 +88,7 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory="$ROOT_DIR/backend"
 EnvironmentFile="$ROOT_DIR/backend/.env"
-ExecStart="$ROOT_DIR/backend/miniacs"
+ExecStart="$ROOT_DIR/backend/skyacs"
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -112,9 +112,9 @@ ReadWritePaths="$ROOT_DIR/backend/uploads"
 WantedBy=multi-user.target
 EOF
 
-cat >/etc/systemd/system/miniacs-web.service <<EOF
+cat >/etc/systemd/system/skyacs-web.service <<EOF
 [Unit]
-Description=miniACS web console
+Description=SKYACS web console
 After=network-online.target
 Wants=network-online.target
 
@@ -146,7 +146,7 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now miniacs miniacs-web
+systemctl enable --now skyacs skyacs-web
 
 ready=false
 for _ in {1..30}; do
@@ -158,8 +158,8 @@ for _ in {1..30}; do
   sleep 1
 done
 if [[ "$ready" != true ]]; then
-  echo "miniACS failed its startup health check. Recent logs:" >&2
-  journalctl -u miniacs -n 50 --no-pager >&2 || true
+  echo "SKYACS failed its startup health check. Recent logs:" >&2
+  journalctl -u skyacs -n 50 --no-pager >&2 || true
   exit 1
 fi
 
@@ -168,4 +168,4 @@ echo "Installation complete"
 echo "Web UI: http://localhost:5173"
 echo "CWMP:   http://localhost:7547/"
 echo "API:    http://localhost:7548/health"
-echo "Run: journalctl -u miniacs -n 50 to retrieve the one-time bootstrap password."
+echo "Run: journalctl -u skyacs -n 50 to retrieve the one-time bootstrap password."

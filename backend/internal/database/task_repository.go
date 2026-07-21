@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/skydashnet/miniacs/internal/models"
+	"github.com/skydashnet/skyacs/internal/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -55,7 +55,7 @@ func (r *TaskRepository) ClaimNextPending(ctx context.Context, deviceID int64) (
 		now := time.Now()
 		commandKey := task.CommandKey
 		if commandKey == "" {
-			commandKey = fmt.Sprintf("miniacs-task-%d", task.ID)
+			commandKey = fmt.Sprintf("skyacs-task-%d", task.ID)
 		}
 		result := tx.Model(&models.Task{}).
 			Where("id = ? AND status = ?", task.ID, models.TaskStatusPending).

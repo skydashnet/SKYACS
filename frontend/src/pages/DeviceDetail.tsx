@@ -51,8 +51,8 @@ const DeviceDetail: Component = () => {
 
   createEffect(() => {
     const s = serial();
-    document.title = s ? `${s} - miniACS` : 'miniACS';
-    onCleanup(() => { document.title = 'miniACS'; });
+    document.title = s ? `${s} - SKYACS` : 'SKYACS';
+    onCleanup(() => { document.title = 'SKYACS'; });
   });
 
   const showMessage = (type: 'success' | 'error', text: string) => {

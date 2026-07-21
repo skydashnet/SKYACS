@@ -44,7 +44,7 @@ export const AuthProvider: ParentComponent = (props) => {
     const body = await response.json().catch(() => ({ error: 'Login service unavailable' }));
     if (!response.ok) throw new Error(body.error || 'Login failed');
 
-    sessionStorage.setItem('miniacs_token', body.token);
+    sessionStorage.setItem('skyacs_token', body.token);
     setToken(body.token);
     setUser(body.user);
   };

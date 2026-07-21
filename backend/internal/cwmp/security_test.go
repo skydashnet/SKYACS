@@ -38,7 +38,7 @@ func TestSecureEqual(t *testing.T) {
 }
 
 func TestForwardedHTTPSRequiresTrustedProxy(t *testing.T) {
-	request := httptest.NewRequest("POST", "http://miniacs/", nil)
+	request := httptest.NewRequest("POST", "http://skyacs/", nil)
 	request.RemoteAddr = "198.51.100.10:1234"
 	request.Header.Set("X-Forwarded-Proto", "https")
 	handler := &Handler{trustedProxies: parseAllowedNetworks("127.0.0.1/32")}
@@ -52,7 +52,7 @@ func TestForwardedHTTPSRequiresTrustedProxy(t *testing.T) {
 }
 
 func TestCWMPClientAddressRejectsSpoofedForwardedHop(t *testing.T) {
-	request := httptest.NewRequest("POST", "http://miniacs/", nil)
+	request := httptest.NewRequest("POST", "http://skyacs/", nil)
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Header.Set("X-Forwarded-For", "203.0.113.66, 198.51.100.25, 127.0.0.1")
 	handler := &Handler{trustedProxies: parseAllowedNetworks("127.0.0.1/32")}
