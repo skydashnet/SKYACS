@@ -1,10 +1,12 @@
 import type { Component } from 'solid-js';
 import { createResource, createSignal, Show, For, createMemo, createEffect, onMount } from 'solid-js';
-import { useNavigate } from '@solidjs/router';
+import { A } from '@solidjs/router';
 import { RefreshCw, ChevronLeft, ChevronRight, Router as RouterIcon, Settings2, X, Check, GripVertical, Search, Send, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-solid';
-import { api } from '../lib/api';
+import { api, type Device } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import PageHeader from '../components/PageHeader';
+import { useFeedback } from '../components/Feedback';
+import { EmptyState, ResourceError } from '../components/ResourceState';
 
 interface ColumnConfig {
   id: string;
@@ -42,8 +44,8 @@ const Devices: Component = () => {
   const [columns, setColumns] = createSignal<ColumnConfig[]>([]);
   const [summoningAll, setSummoningAll] = createSignal(false);
   const [sortBy, setSortBy] = createSignal<{ column: string; direction: 'asc' | 'desc' } | null>(null);
-  const navigate = useNavigate();
   const { isFullAccess } = useAuth();
+  const { notify } = useFeedback();
   const limit = 20;
 
   onMount(() => {
@@ -124,7 +126,18 @@ const Devices: Component = () => {
     setDraggedCol(null);
   };
 
-  const getRxPower = (device: any) => {
+  const moveColumn = (id: string, offset: -1 | 1) => {
+    setColumns((current) => {
+      const sorted = [...current].sort((a, b) => a.order - b.order);
+      const index = sorted.findIndex((column) => column.id === id);
+      const target = index + offset;
+      if (index < 0 || target < 0 || target >= sorted.length) return current;
+      [sorted[index], sorted[target]] = [sorted[target]!, sorted[index]!];
+      return sorted.map((column, order) => ({ ...column, order }));
+    });
+  };
+
+  const getRxPower = (device: Device) => {
     const params = device.parameters || [];
     const rxParam = params.find((p: any) => 
       p.name.includes('RXPower') || 
@@ -152,20 +165,20 @@ const Devices: Component = () => {
     return { value: val.toFixed(2), color };
   };
 
-  const getPppUsername = (device: any) => {
+  const getPppUsername = (device: Device) => {
     const param = device.parameters?.find((p: any) => 
       p.name.includes('WANPPPConnection') && p.name.includes('Username')
     );
     return param?.value || '-';
   };
 
-  const getCellValue = (device: any, columnId: string) => {
+  const getCellValue = (device: Device, columnId: string) => {
     switch (columnId) {
       case 'serial_number':
         return (
-          <span class="text-sky-500 font-mono text-sm">
+          <A class="data-link font-mono text-sm" href={`/device/${encodeURIComponent(device.serial_number)}`} aria-label={`Open CPE ${device.serial_number}`}>
             {device.serial_number}
-          </span>
+          </A>
         );
       case 'manufacturer':
         return <span class="text-secondary text-sm">{device.manufacturer || '-'}</span>;
@@ -187,7 +200,7 @@ const Devices: Component = () => {
               ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' 
               : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
           }`}>
-            <span class={`w-1.5 h-1.5 rounded-full ${device.online ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+            <span class={`w-1.5 h-1.5 rounded-full ${device.online ? 'bg-emerald-400' : 'bg-rose-400'}`} aria-hidden="true" />
             {device.online ? 'Online' : 'Offline'}
           </span>
         );
@@ -275,28 +288,35 @@ const Devices: Component = () => {
 
   return (
     <div class="space-y-5">
-      <PageHeader title="Device inventory" description="Search, inspect, and operate registered TR-069 endpoints.">
+      <PageHeader title="CPE inventory" description="Search, inspect, and operate registered TR-069 endpoints.">
         <div class="flex gap-2">
-          <div class="relative">
+          <div class="flex flex-col gap-1">
+            <label for="device-search" class="text-[10px] text-muted">Find CPE</label>
+            <div class="relative">
             <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
             <input
+              id="device-search"
               type="text"
               value={searchQuery()}
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
-              placeholder="Search devices..."
+              placeholder="Serial, model, vendor, or IP"
               class="input device-search-input w-48 text-sm"
             />
             <Show when={searchQuery()}>
               <button
                 onClick={() => setSearchQuery('')}
-                class="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary"
+                class="input-clear"
+                aria-label="Clear CPE search"
               >
                 <X size={12} />
               </button>
             </Show>
+            </div>
           </div>
           <button onClick={() => setShowColumnSettings(!showColumnSettings())}
             class={`btn btn-secondary ${showColumnSettings() ? 'bg-sky-500/20 text-sky-400' : ''}`}
+            aria-expanded={showColumnSettings()}
+            aria-controls="device-column-settings"
           >
             <Settings2 size={14} />
             <span class="hidden sm:inline">Columns</span>
@@ -306,15 +326,20 @@ const Devices: Component = () => {
               const list = deviceList()?.devices;
               if (!list || summoningAll()) return;
               setSummoningAll(true);
-              const results = await Promise.allSettled(
-                list.map((d: any) => api.connectionRequest(d.serial_number))
-              );
-              const successCount = results.filter((r: PromiseSettledResult<any>) => r.status === 'fulfilled').length;
-              await new Promise(resolve => setTimeout(resolve, 5000));
-              refetch();
-              
-              alert(`Summon selesai: ${successCount}/${list.length} connection request terkirim.\nData sudah di-refresh.`);
-              setSummoningAll(false);
+              try {
+                const results = await Promise.allSettled(list.map((device) => api.connectionRequest(device.serial_number)));
+                const successCount = results.filter((result) => result.status === 'fulfilled').length;
+                const failureCount = list.length - successCount;
+                notify({
+                  tone: failureCount > 0 ? 'error' : 'success',
+                  title: failureCount > 0 ? 'Connection requests partially completed' : 'Connection requests sent',
+                  message: `${successCount} of ${list.length} visible CPEs accepted the request.${failureCount > 0 ? ` ${failureCount} require individual review.` : ''}`,
+                  persistent: failureCount > 0,
+                });
+                await refetch();
+              } finally {
+                setSummoningAll(false);
+              }
             }}
             disabled={summoningAll()}
             class="btn btn-secondary"
@@ -322,7 +347,7 @@ const Devices: Component = () => {
             <Send size={14} class={summoningAll() ? 'animate-pulse' : ''} />
             <span class="hidden sm:inline">{summoningAll() ? 'Summoning...' : 'Summon All'}</span>
           </button></Show>
-          <button onClick={() => refetch()} class="btn btn-secondary">
+          <button onClick={() => refetch()} class="btn btn-secondary" disabled={deviceList.loading}>
             <RefreshCw size={14} />
             <span class="hidden sm:inline">Refresh</span>
           </button>
@@ -331,17 +356,17 @@ const Devices: Component = () => {
 
       {/* Column Settings Panel */}
       <Show when={showColumnSettings()}>
-        <div class="card p-4">
+        <div id="device-column-settings" class="card p-4">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-medium text-secondary">Manage Columns</h3>
-            <button onClick={() => setShowColumnSettings(false)} class="text-muted hover:text-primary">
+            <button onClick={() => setShowColumnSettings(false)} class="icon-button" aria-label="Close column settings">
               <X size={16} />
             </button>
           </div>
           <div class="flex flex-wrap gap-2">
             <For each={columns().sort((a, b) => a.order - b.order)}>
               {(col) => (
-                <div 
+                <div
                   draggable={true}
                   onDragStart={(e) => handleDragStart(e, col.id)}
                   onDragOver={handleDragOver}
@@ -351,12 +376,18 @@ const Devices: Component = () => {
                   <GripVertical size={12} class="text-muted" />
                   <button
                     onClick={() => toggleColumn(col.id)}
-                    class={`w-4 h-4 border flex items-center justify-center transition-colors ${col.visible ? 'bg-sky-500 border-sky-500' : 'border-muted bg-transparent'}`}
+                    class={`icon-button ${col.visible ? 'text-sky-400 border-sky-500' : ''}`}
+                    aria-label={`${col.visible ? 'Hide' : 'Show'} ${col.label} column`}
+                    aria-pressed={col.visible}
                   >
                     {col.visible && <Check size={10} class="text-white" />}
                   </button>
                   <span class={`text-sm ${col.visible ? 'text-primary' : 'text-muted'}`}>
                     {col.label}
+                  </span>
+                  <span class="inline-flex ml-auto">
+                    <button type="button" class="icon-button" onClick={() => moveColumn(col.id, -1)} aria-label={`Move ${col.label} column left`}><ChevronLeft size={12} /></button>
+                    <button type="button" class="icon-button" onClick={() => moveColumn(col.id, 1)} aria-label={`Move ${col.label} column right`}><ChevronRight size={12} /></button>
                   </span>
                 </div>
               )}
@@ -365,9 +396,13 @@ const Devices: Component = () => {
         </div>
       </Show>
 
-      <div class="card overflow-hidden">
+      <Show when={deviceList.error}>
+        <div class="card"><ResourceError title="CPE inventory is unavailable" description="The inventory request failed. Check the API service status and retry without losing the current search or column settings." onRetry={() => refetch()} /></div>
+      </Show>
+
+      <Show when={!deviceList.error}><div class="card overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="data-table w-full">
             <thead>
               <tr class="border-b border-subtle">
                 <For each={visibleColumns()}>
@@ -377,7 +412,7 @@ const Devices: Component = () => {
                     const isSorted = currentSort?.column === col.id;
                     
                     return (
-                      <th class="px-4 py-2 text-left whitespace-nowrap">
+                      <th class="px-4 py-2 text-left whitespace-nowrap" aria-sort={isSorted ? (currentSort?.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
                         <div class="flex items-center gap-2">
                           <button
                             onClick={(e) => {
@@ -388,6 +423,7 @@ const Devices: Component = () => {
                             class={`flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
                               isSorted ? 'text-sky-400' : 'text-muted'
                             } ${isSortable ? 'hover:text-primary cursor-pointer' : 'cursor-default'}`}
+                            disabled={!isSortable}
                           >
                             {col.label}
                             <Show when={isSortable}>
@@ -415,19 +451,20 @@ const Devices: Component = () => {
                   fallback={
                     <tr>
                       <td colspan={visibleColumns().length} class="px-4 py-12 text-center">
-                        <RouterIcon size={32} class="mx-auto text-muted mb-2 opacity-50" />
-                        <p class="text-muted text-sm">No devices found</p>
-                        <p class="text-muted opacity-50 text-xs mt-1">Devices will appear after connecting to the ACS</p>
+                        <EmptyState
+                          compact
+                          icon={<RouterIcon size={22} />}
+                          title={searchQuery() ? 'No CPEs match this search' : 'No CPEs have registered'}
+                          description={searchQuery() ? 'Change the serial, model, vendor, or IP search to return to the current inventory.' : 'CPEs appear after their first CWMP Inform reaches SKYACS. Verify the published endpoint and device ACS URL.'}
+                          action={searchQuery() ? <button type="button" class="btn btn-secondary" onClick={() => setSearchQuery('')}>Clear search</button> : undefined}
+                        />
                       </td>
                     </tr>
                   }
                 >
                   <For each={sortedDevices()}>
                     {(device, idx) => (
-                      <tr 
-                        class={`border-t border-subtle hover:bg-elevated transition-fast cursor-pointer ${idx() % 2 === 1 ? 'bg-base/50' : ''}`}
-                        onClick={() => navigate(`/device/${device.serial_number}`)}
-                      >
+                      <tr class={`border-t border-subtle hover:bg-elevated transition-fast ${idx() % 2 === 1 ? 'bg-base/50' : ''}`}>
                         <For each={visibleColumns()}>
                           {(col) => (
                             <td class="px-4 py-3 whitespace-nowrap">
@@ -443,7 +480,7 @@ const Devices: Component = () => {
             </tbody>
           </table>
         </div>
-      </div>
+      </div></Show>
 
       <Show when={totalPages() > 1}>
         <div class="flex items-center justify-between text-sm">

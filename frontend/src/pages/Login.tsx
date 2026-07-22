@@ -24,7 +24,9 @@ const Login: Component = () => {
       await login(username().trim(), password());
       navigate('/', { replace: true });
     } catch (reason) {
-      setError((reason as Error).message);
+      setError(reason instanceof TypeError
+        ? 'The authentication service could not be reached. Check the API service and network connection, then retry.'
+        : (reason as Error).message);
     } finally {
       setLoading(false);
     }
@@ -74,19 +76,19 @@ const Login: Component = () => {
             <p class="text-sm text-muted mt-2">Use your SKYACS control-plane credentials.</p>
 
             <Show when={error()}>
-              <div role="alert" class="mt-6 px-3 py-2.5 border border-red-500/30 bg-red-500/8 rounded-[3px] text-xs text-red-400">{error()}</div>
+              <div id="login-error" role="alert" class="mt-6 px-3 py-2.5 border border-red-500/30 bg-red-500/8 rounded-[3px] text-xs text-red-400">{error()}</div>
             </Show>
 
             <form onSubmit={handleSubmit} class="mt-7 space-y-5">
               <div>
                 <label for="username" class="block text-[11px] font-semibold text-secondary mb-2">Username</label>
-                <input id="username" class="input h-10" value={username()} onInput={(event) => setUsername(event.currentTarget.value)} autocomplete="username" required autofocus placeholder="operator" />
+                <input id="username" class="input h-10" value={username()} onInput={(event) => setUsername(event.currentTarget.value)} autocomplete="username" required autofocus placeholder="operator" aria-invalid={Boolean(error())} aria-describedby={error() ? 'login-error' : undefined} />
               </div>
               <div>
                 <label for="password" class="block text-[11px] font-semibold text-secondary mb-2">Password</label>
                 <div class="relative">
-                  <input id="password" class="input h-10 pr-10" type={showPassword() ? 'text' : 'password'} value={password()} onInput={(event) => setPassword(event.currentTarget.value)} autocomplete="current-password" required placeholder="Enter password" />
-                  <button type="button" class="absolute right-1 top-1 w-8 h-8 grid place-items-center text-muted hover:text-primary" onClick={() => setShowPassword(!showPassword())} aria-label={showPassword() ? 'Hide password' : 'Show password'}>
+                  <input id="password" class="input h-10 pr-10" type={showPassword() ? 'text' : 'password'} value={password()} onInput={(event) => setPassword(event.currentTarget.value)} autocomplete="current-password" required placeholder="Enter password" aria-invalid={Boolean(error())} aria-describedby={error() ? 'login-error' : undefined} />
+                  <button type="button" class="input-reveal" onClick={() => setShowPassword(!showPassword())} aria-label={showPassword() ? 'Hide password' : 'Show password'}>
                     {showPassword() ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>

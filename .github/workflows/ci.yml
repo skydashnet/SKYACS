@@ -40,6 +40,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --include=dev
       - run: npm audit
+      - run: npm run check:ui
       - run: npm run build
 
   installer:

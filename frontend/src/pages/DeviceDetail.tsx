@@ -4,11 +4,15 @@ import { useParams, A, useNavigate } from '@solidjs/router';
 import { ArrowLeft, RefreshCw, RotateCcw, Trash2, Server, Network, Radio, Users, Zap, Edit, Save, X, HeartPulse, Send, Key, Eye, EyeOff, ShieldCheck } from 'lucide-solid';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import Dialog from '../components/Dialog';
+import { useFeedback } from '../components/Feedback';
+import { EmptyState, ResourceError } from '../components/ResourceState';
 
 const DeviceDetail: Component = () => {
   const params = useParams<{ serial: string }>();
   const navigate = useNavigate();
   const { isFullAccess } = useAuth();
+  const { confirm } = useFeedback();
   const serial = () => params.serial || '';
 
   const [device, { refetch: refetchDevice }] = createResource(serial, api.getDevice);
@@ -16,7 +20,7 @@ const DeviceDetail: Component = () => {
   const [tasks, { refetch: refetchTasks }] = createResource(serial, api.getDeviceTasks);
 
   const [actionLoading, setActionLoading] = createSignal<string | null>(null);
-  const [message, setMessage] = createSignal<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessage] = createSignal<{ type: 'success' | 'error'; text: string; detail?: string } | null>(null);
   const [paramFilter, setParamFilter] = createSignal('');
   const [editingWifi, setEditingWifi] = createSignal<number | null>(null);
   const [wifiEdits, setWifiEdits] = createSignal<Record<string, string>>({});
@@ -27,16 +31,13 @@ const DeviceDetail: Component = () => {
   const [editingModemCreds, setEditingModemCreds] = createSignal(false);
   const [showSensitive, setShowSensitive] = createSignal(false);
   const [modemCredsEdits, setModemCredsEdits] = createSignal<Record<string, string>>({});
-	const [showFactoryResetModal, setShowFactoryResetModal] = createSignal(false);
-	const [factoryResetPassword, setFactoryResetPassword] = createSignal('');
-	const closeFactoryResetModal = () => {
-	  setShowFactoryResetModal(false);
-	  setFactoryResetPassword('');
-	};
-
-
-
-
+  const [showFactoryResetModal, setShowFactoryResetModal] = createSignal(false);
+  const [factoryResetPassword, setFactoryResetPassword] = createSignal('');
+  let messageTimeout: number | undefined;
+  const closeFactoryResetModal = () => {
+    setShowFactoryResetModal(false);
+    setFactoryResetPassword('');
+  };
 
   onMount(() => {
 		const interval = setInterval(() => {
@@ -55,46 +56,50 @@ const DeviceDetail: Component = () => {
     onCleanup(() => { document.title = 'SKYACS'; });
   });
 
-  const showMessage = (type: 'success' | 'error', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 5000);
+  const showMessage = (type: 'success' | 'error', text: string, detail?: string) => {
+    if (messageTimeout) window.clearTimeout(messageTimeout);
+    setMessage({ type, text, detail });
+    if (type === 'success') messageTimeout = window.setTimeout(() => setMessage(null), 5000);
   };
+  onCleanup(() => {
+    if (messageTimeout) window.clearTimeout(messageTimeout);
+  });
 
   const handleReboot = async () => {
-    if (!confirm('Reboot device ini?')) return;
+    if (!await confirm({ title: `Reboot CPE ${serial()}?`, description: 'SKYACS will queue a reboot task for the next available CWMP session. Service may be interrupted while the CPE restarts.', confirmLabel: 'Queue reboot' })) return;
     setActionLoading('reboot');
     try {
       await api.rebootDevice(serial());
       showMessage('success', 'Reboot task created.');
       refetchTasks();
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', 'Reboot task was not created. Retry after checking the CPE session and API status.', (err as Error).message);
     }
     setActionLoading(null);
   };
 
   const handleFactoryReset = async () => {
-	if (!factoryResetPassword()) return;
+    if (!factoryResetPassword()) return;
     setActionLoading('factory-reset');
     try {
-	  await api.factoryResetDevice(serial(), factoryResetPassword());
-	  closeFactoryResetModal();
-      showMessage('success', 'Factory Reset task created.');
+      await api.factoryResetDevice(serial(), factoryResetPassword());
+      closeFactoryResetModal();
+      showMessage('success', 'Factory reset task created. Track its state in the task register.');
       refetchTasks();
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', 'Factory reset task was rejected. Verify the account password and retry.', (err as Error).message);
     }
     setActionLoading(null);
   };
 
   const handleDelete = async () => {
-    if (!confirm('Hapus device ini dari database?')) return;
+    if (!await confirm({ title: `Delete CPE ${serial()}?`, description: 'This permanently removes the CPE record and its local operational history. A future Inform may register the device again.', confirmLabel: 'Delete CPE record', tone: 'danger' })) return;
     setActionLoading('delete');
     try {
       await api.deleteDevice(serial());
       navigate('/devices');
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', 'The CPE record was not deleted. Retry after checking your permission and the API status.', (err as Error).message);
       setActionLoading(null);
     }
   };
@@ -105,10 +110,10 @@ const DeviceDetail: Component = () => {
       const result = await api.connectionRequest(serial());
       showMessage('success', result.message);
       
-		const hasTR181 = (parameters() || []).some(parameter => parameter.name.startsWith('Device.'));
-		await api.getParameterValues(serial(), [hasTR181 ? 'Device.' : 'InternetGatewayDevice.']);
+      const hasTR181 = (parameters() || []).some(parameter => parameter.name.startsWith('Device.'));
+      await api.getParameterValues(serial(), [hasTR181 ? 'Device.' : 'InternetGatewayDevice.']);
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', 'Connection request failed. Verify reachability and credentials, then retry.', (err as Error).message);
     }
     setActionLoading(null);
   };
@@ -143,17 +148,17 @@ const DeviceDetail: Component = () => {
       }
 
       await api.setParameterValues(serial(), params);
-      showMessage('success', `WiFi SSID${index} update task created.`);
+      showMessage('success', `Wi-Fi SSID${index} update task created.`);
       refetchTasks();
       handleCancelEditWifi();
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', 'Wi-Fi update task was not created. The entered values are preserved; check the session and retry.', (err as Error).message);
     }
     setActionLoading(null);
   };
 
   const handleSetWifiEnabled = async (index: number, enabled: boolean) => {
-    if (!confirm(`${enabled ? 'Enable' : 'Disable'} SSID${index}?`)) return;
+    if (!await confirm({ title: `${enabled ? 'Enable' : 'Disable'} SSID${index}?`, description: `${enabled ? 'Wireless clients may reconnect when the task completes.' : 'Connected clients on this SSID will lose network access when the task completes.'}`, confirmLabel: `${enabled ? 'Enable' : 'Disable'} SSID${index}`, tone: enabled ? 'primary' : 'danger' })) return;
     
     setActionLoading(`wifi-enable-${index}`);
     try {
@@ -164,7 +169,7 @@ const DeviceDetail: Component = () => {
       showMessage('success', `SSID${index} ${enabled ? 'enabled' : 'disabled'} task created.`);
       refetchTasks();
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', `SSID${index} state was not changed. Check the CPE session and retry.`, (err as Error).message);
     }
     setActionLoading(null);
   };
@@ -199,11 +204,11 @@ const DeviceDetail: Component = () => {
       }
 
       await api.setParameterValues(serial(), params);
-      showMessage('success', `PPPoE credentials untuk WAN${index} berhasil diubah.`);
+      showMessage('success', `PPPoE credential update queued for WAN${index}.`);
       refetchTasks();
       handleCancelEditPPP();
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', `PPPoE credentials for WAN${index} were not queued. The entered values are preserved; retry after checking the CPE session.`, (err as Error).message);
     }
     setActionLoading(null);
   };
@@ -326,11 +331,11 @@ const DeviceDetail: Component = () => {
       }
 
       await api.setParameterValues(serial(), params);
-      showMessage('success', 'Modem credentials berhasil diubah.');
+      showMessage('success', 'CPE web-interface credential update task created.');
       refetchTasks();
       handleCancelModemCreds();
     } catch (err) {
-      showMessage('error', 'Gagal: ' + (err as Error).message);
+      showMessage('error', 'CPE credential update was not queued. The entered values are preserved; retry after checking the CPE session.', (err as Error).message);
     }
     setActionLoading(null);
   };
@@ -350,8 +355,8 @@ const DeviceDetail: Component = () => {
     const days = Math.floor(secs / 86400);
     const hours = Math.floor((secs % 86400) / 3600);
     const mins = Math.floor((secs % 3600) / 60);
-    if (days > 0) return `${days}h ${hours}j ${mins}m`;
-    if (hours > 0) return `${hours}j ${mins}m`;
+    if (days > 0) return `${days}d ${hours}h ${mins}m`;
+    if (hours > 0) return `${hours}h ${mins}m`;
     return `${mins}m`;
   };
 
@@ -693,7 +698,7 @@ const DeviceDetail: Component = () => {
       <div class="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-4">
         <div class="flex-1">
           <div class="flex items-center gap-3 mb-1">
-            <A href="/devices" class="text-muted hover:text-secondary transition-fast">
+            <A href="/devices" class="icon-button" aria-label="Back to CPE inventory">
               <ArrowLeft size={18} />
             </A>
             <Show when={device()}>
@@ -712,7 +717,7 @@ const DeviceDetail: Component = () => {
             <Zap size={14} />
             <span class="hidden sm:inline">{actionLoading() === 'summon' ? '...' : 'Summon'}</span>
           </button></Show>
-          <button onClick={refreshAll} class="btn btn-secondary text-xs sm:text-sm">
+          <button onClick={refreshAll} disabled={device.loading || parameters.loading || tasks.loading} class="btn btn-secondary text-xs sm:text-sm">
             <RefreshCw size={14} />
             <span class="hidden sm:inline">Refresh</span>
           </button>
@@ -720,12 +725,24 @@ const DeviceDetail: Component = () => {
       </div>
 
       <Show when={message()}>
-        <div class={`p-3 rounded-md text-sm ${message()?.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
-          {message()?.text}
+        <div role={message()?.type === 'error' ? 'alert' : 'status'} class={`p-3 rounded-md text-sm ${message()?.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+          <p>{message()?.text}</p>
+          <Show when={message()?.detail}>
+            <details class="mt-2 text-xs">
+              <summary class="cursor-pointer">Technical details</summary>
+              <pre class="mt-2 overflow-auto whitespace-pre-wrap break-words font-mono">{message()?.detail}</pre>
+            </details>
+          </Show>
         </div>
       </Show>
 
-      <Show when={device()} fallback={
+      <Show when={device.error}>
+        <div class="card"><ResourceError title="CPE record is unavailable" description="The device record could not be loaded. Return to the inventory or retry this request." onRetry={() => refetchDevice()} /></div>
+      </Show>
+      <Show when={!device.error && (parameters.error || tasks.error)}>
+        <div class="card"><ResourceError title="CPE detail is incomplete" description="The device record loaded, but parameters or task history are unavailable. Retry before issuing a configuration action." onRetry={refreshAll} /></div>
+      </Show>
+      <Show when={device.loading}>
         <div class="card p-6">
           <div class="skeleton h-6 w-48 mb-4" />
           <div class="grid grid-cols-2 gap-4">
@@ -733,7 +750,8 @@ const DeviceDetail: Component = () => {
             <div class="skeleton h-4 w-32" />
           </div>
         </div>
-      }>
+      </Show>
+      <Show when={!device.loading && !device.error && device()}>
         {(d) => (
           <>
             {/* Row 1: ONT Info + Device Health + Actions */}
@@ -817,12 +835,12 @@ const DeviceDetail: Component = () => {
                   <button
                     onClick={handleEditModemCreds}
                     disabled={actionLoading() !== null}
-                    class="p-1.5 rounded hover:bg-elevated text-sky-500"
-                    title="Edit Credentials"
+                    class="icon-button"
+                    aria-label="Edit CPE web-interface credentials"
                   >
                     <Edit size={14} />
                   </button>
-                </Show><button onClick={() => setShowSensitive(!showSensitive())} class="icon-button !w-7 !h-7" title={showSensitive() ? 'Hide secrets' : 'Reveal secrets'}>{showSensitive() ? <EyeOff size={13} /> : <Eye size={13} />}</button></div>
+                </Show><button onClick={() => setShowSensitive(!showSensitive())} class="icon-button" aria-label={showSensitive() ? 'Hide sensitive values' : 'Reveal sensitive values'} aria-pressed={showSensitive()}>{showSensitive() ? <EyeOff size={13} /> : <Eye size={13} />}</button></div>
               </div>
               <Show when={editingModemCreds()} fallback={
                 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
@@ -846,9 +864,10 @@ const DeviceDetail: Component = () => {
               }>
                 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                   <div>
-                    <label class="text-muted text-xs mb-1 block">Admin Username</label>
+                    <label for="cpe-admin-username" class="text-muted text-xs mb-1 block">Administrator username</label>
                     <input
-                      type="password"
+                      id="cpe-admin-username"
+                      type="text"
                       value={modemCredsEdits().adminUser || ''}
                       onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), adminUser: e.currentTarget.value })}
                       class="input w-full py-1.5 text-sm font-mono"
@@ -856,8 +875,9 @@ const DeviceDetail: Component = () => {
                     />
                   </div>
                   <div>
-                    <label class="text-muted text-xs mb-1 block">Admin Password</label>
+                    <label for="cpe-admin-password" class="text-muted text-xs mb-1 block">Administrator password</label>
                     <input
+                      id="cpe-admin-password"
                       type="password"
                       value={modemCredsEdits().adminPass || ''}
                       onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), adminPass: e.currentTarget.value })}
@@ -866,8 +886,9 @@ const DeviceDetail: Component = () => {
                     />
                   </div>
                   <div>
-                    <label class="text-muted text-xs mb-1 block">User Username</label>
+                    <label for="cpe-user-username" class="text-muted text-xs mb-1 block">User username</label>
                     <input
+                      id="cpe-user-username"
                       type="text"
                       value={modemCredsEdits().userUser || ''}
                       onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), userUser: e.currentTarget.value })}
@@ -876,9 +897,10 @@ const DeviceDetail: Component = () => {
                     />
                   </div>
                   <div>
-                    <label class="text-muted text-xs mb-1 block">User Password</label>
+                    <label for="cpe-user-password" class="text-muted text-xs mb-1 block">User password</label>
                     <input
-                      type="text"
+                      id="cpe-user-password"
+                      type="password"
                       value={modemCredsEdits().userPass || ''}
                       onInput={(e) => setModemCredsEdits({ ...modemCredsEdits(), userPass: e.currentTarget.value })}
                       class="input w-full py-1.5 text-sm font-mono"
@@ -893,7 +915,7 @@ const DeviceDetail: Component = () => {
                     class="btn btn-secondary text-sm py-1.5"
                   >
                     <X size={14} />
-                    Batal
+                    Cancel
                   </button>
                   <button
                     onClick={handleSaveModemCreds}
@@ -901,7 +923,7 @@ const DeviceDetail: Component = () => {
                     class="btn btn-primary text-sm py-1.5"
                   >
                     <Save size={14} />
-                    {actionLoading() === 'modem-creds' ? 'Menyimpan...' : 'Simpan'}
+                    {actionLoading() === 'modem-creds' ? 'Queuing update…' : 'Queue credential update'}
                   </button>
                 </div>
               </Show>
@@ -917,7 +939,7 @@ const DeviceDetail: Component = () => {
                 <p class="text-muted text-sm">No WAN configuration data. Click Summon to fetch.</p>
               }>
                 <div class="overflow-x-auto">
-                  <table class="w-full text-sm">
+                  <table class="data-table w-full text-sm min-w-[1180px]">
                     <thead class="sticky top-0 bg-base z-10">
                       <tr class="border-b-2 border-subtle bg-base">
                         <th class="text-left px-3 py-2.5 font-semibold text-primary">Name</th>
@@ -962,6 +984,7 @@ const DeviceDetail: Component = () => {
                                     onInput={(e) => setPPPEdits({ ...pppEdits(), username: e.currentTarget.value })}
                                     class="w-28 px-2 py-1 text-sm border border-default rounded bg-elevated text-primary"
                                     placeholder="Username"
+                                    aria-label={`PPPoE username for ${wan.name}`}
                                   />
                                   <input
                                     type="password"
@@ -969,6 +992,7 @@ const DeviceDetail: Component = () => {
                                     onInput={(e) => setPPPEdits({ ...pppEdits(), password: e.currentTarget.value })}
                                     class="w-28 px-2 py-1 text-sm border border-default rounded bg-elevated text-primary"
                                     placeholder="Password"
+                                    aria-label={`New PPPoE password for ${wan.name}`}
                                   />
                                 </div>
                               </Show>
@@ -990,8 +1014,8 @@ const DeviceDetail: Component = () => {
                                   <button
                                     onClick={() => handleEditPPP(wan.index, wan.username, wan.password)}
                                     disabled={actionLoading() !== null}
-                                    class="p-1 rounded hover:bg-elevated text-sky-500"
-                                    title="Edit PPPoE"
+                                    class="icon-button"
+                                    aria-label={`Edit PPPoE credentials for ${wan.name}`}
                                   >
                                     <Edit size={14} />
                                   </button>
@@ -1000,16 +1024,16 @@ const DeviceDetail: Component = () => {
                                     <button
                                       onClick={() => handleSavePPP(wan.index)}
                                       disabled={actionLoading() === `ppp-${wan.index}`}
-                                      class="p-1 rounded hover:bg-elevated text-emerald-500"
-                                      title="Save"
+                                      class="icon-button"
+                                      aria-label={`Queue PPPoE credential update for ${wan.name}`}
                                     >
                                       <Save size={14} />
                                     </button>
                                     <button
                                       onClick={handleCancelEditPPP}
                                       disabled={actionLoading() !== null}
-                                      class="p-1 rounded hover:bg-elevated text-rose-500"
-                                      title="Cancel"
+                                      class="icon-button"
+                                      aria-label={`Cancel PPPoE edit for ${wan.name}`}
                                     >
                                       <X size={14} />
                                     </button>
@@ -1026,18 +1050,18 @@ const DeviceDetail: Component = () => {
               </Show>
             </div>
 
-            {/* Row 3: WiFi Information */}
+            {/* Row 3: Wi-Fi information */}
             <div class="card p-5">
               <h2 class="text-xs font-medium text-muted mb-4 flex items-center gap-2">
                 <Radio size={14} />
-                WiFi Configuration
+                Wi-Fi configuration
               </h2>
-              <Show when={!parameters.loading || (parameters()?.length ?? 0) > 0} fallback={<p class="text-muted text-sm">Loading...</p>}>
+              <Show when={!parameters.loading || (parameters()?.length ?? 0) > 0} fallback={<div class="space-y-2" aria-label="Loading Wi-Fi configuration"><div class="skeleton h-8 w-full" /><div class="skeleton h-8 w-full" /><div class="skeleton h-8 w-3/4" /></div>}>
                 <Show when={getWlanConfigs().length > 0} fallback={
-                  <p class="text-muted text-sm">No WiFi configuration data. Click Summon to fetch.</p>
+                  <EmptyState compact title="No Wi-Fi configuration is stored" description="This CPE has not reported WLAN parameters. Send a connection request with Summon, then refresh the record." />
                 }>
                 <div class="overflow-x-auto">
-                  <table class="w-full text-xs">
+                  <table class="data-table w-full text-xs min-w-[860px]">
                     <thead class="sticky top-0 bg-base z-10">
                       <tr class="border-b border-subtle bg-base">
                         <th class="text-left px-2 py-2 font-medium text-secondary">Index</th>
@@ -1062,6 +1086,7 @@ const DeviceDetail: Component = () => {
                                 onClick={() => handleSetWifiEnabled(wlan.index, !wlan.enabled)}
                                 disabled={actionLoading() !== null}
                                 class={`badge cursor-pointer ${wlan.enabled ? 'badge-success' : 'badge-error'}`}
+                                aria-label={`${wlan.enabled ? 'Disable' : 'Enable'} SSID${wlan.index}`}
                               >
                                 {wlan.enabled ? 'Yes' : 'No'}
                               </button></Show>
@@ -1077,6 +1102,7 @@ const DeviceDetail: Component = () => {
                                   onInput={(e) => setWifiEdits({ ...wifiEdits(), ssid: e.currentTarget.value })}
                                   class="input py-1 px-2 text-sm w-32"
                                   placeholder="SSID Name"
+                                  aria-label={`SSID name for SSID${wlan.index}`}
                                 />
                               </Show>
                             </td>
@@ -1094,6 +1120,7 @@ const DeviceDetail: Component = () => {
                                   onInput={(e) => setWifiEdits({ ...wifiEdits(), password: e.currentTarget.value })}
                                   class="input py-1 px-2 text-sm w-28"
                                   placeholder="Password"
+                                  aria-label={`New wireless password for SSID${wlan.index}`}
                                 />
                               </Show>
                             </td>
@@ -1139,12 +1166,12 @@ const DeviceDetail: Component = () => {
                 <Users size={14} />
                 Connected Hosts ({getHosts().length})
               </h2>
-              <Show when={!parameters.loading || (parameters()?.length ?? 0) > 0} fallback={<p class="text-muted text-sm">Loading...</p>}>
+              <Show when={!parameters.loading || (parameters()?.length ?? 0) > 0} fallback={<div class="space-y-2" aria-label="Loading connected hosts"><div class="skeleton h-8 w-full" /><div class="skeleton h-8 w-full" /><div class="skeleton h-8 w-2/3" /></div>}>
                 <Show when={getHosts().length > 0} fallback={
-                  <p class="text-muted text-sm">No connected hosts data. Click Summon to fetch.</p>
+                  <EmptyState compact title="No connected hosts are reported" description="The stored parameter set contains no active LAN or Wi-Fi clients. Send a connection request with Summon to request current host data." />
                 }>
                 <div class="overflow-x-auto">
-                  <table class="w-full text-sm">
+                  <table class="data-table w-full text-sm min-w-[720px]">
                     <thead class="sticky top-0 bg-base z-10">
                       <tr class="border-b border-subtle bg-base">
                         <th class="text-left px-3 py-2 text-xs font-medium text-muted">Hostname</th>
@@ -1164,7 +1191,7 @@ const DeviceDetail: Component = () => {
                             <td class="px-3 py-2 text-secondary font-mono text-xs">{host.mac}</td>
                             <td class="px-3 py-2">
                               <span class={`px-2 py-0.5 rounded text-xs ${
-                                host.interface.startsWith('WiFi') || host.interface.startsWith('SSID') 
+                                host.interface.startsWith('WiFi') || host.interface.startsWith('SSID')
                                   ? 'bg-sky-500/20 text-sky-400'
                                   : host.interface === 'Ethernet' 
                                     ? 'bg-blue-500/20 text-blue-400'
@@ -1194,13 +1221,10 @@ const DeviceDetail: Component = () => {
               <div class="p-5 border-b border-subtle">
                 <h2 class="text-sm font-medium text-secondary">Task History ({tasks()?.length || 0})</h2>
               </div>
-              <Show when={(tasks()?.length || 0) > 0} fallback={
-                <div class="p-6 text-center">
-                  <p class="text-muted text-sm">No tasks yet</p>
-                </div>
-              }>
+              <Show when={!tasks.loading} fallback={<div class="p-5 space-y-2" aria-label="Loading CPE task history"><div class="skeleton h-8 w-full" /><div class="skeleton h-8 w-full" /></div>}>
+              <Show when={(tasks()?.length || 0) > 0} fallback={<EmptyState compact title="No remote tasks have been queued" description="Reboot, parameter, firmware, and connection-request operations will appear here after an operator creates them." />}>
                 <div class="max-h-48 overflow-y-auto">
-                  <table class="w-full text-sm">
+                  <table class="data-table w-full text-sm min-w-[680px]">
                     <thead class="bg-base sticky top-0 z-10">
                       <tr class="bg-base">
                         <th class="text-left px-4 py-2 text-xs font-medium text-muted">Type</th>
@@ -1224,6 +1248,7 @@ const DeviceDetail: Component = () => {
                   </table>
                 </div>
               </Show>
+              </Show>
             </div>
 
             {/* Row 6: All Parameters */}
@@ -1233,13 +1258,14 @@ const DeviceDetail: Component = () => {
                   <h2 class="text-sm font-medium text-secondary">All Parameters ({filteredParams().length})</h2>
 
                 </div>
-                <input
-                  type="text"
+                <div><label for="parameter-filter" class="block text-[10px] text-muted mb-1">Filter parameter tree</label><input
+                  id="parameter-filter"
+                  type="search"
                   value={paramFilter()}
                   onInput={(e) => setParamFilter(e.currentTarget.value)}
-                  placeholder="Filter..."
+                  placeholder="Parameter path"
                   class="input w-64 py-1.5 text-sm"
-                />
+                /></div>
               </div>
               <Show when={filteredParams().length > 0} fallback={
                 <div class="p-8 text-center">
@@ -1247,7 +1273,7 @@ const DeviceDetail: Component = () => {
                 </div>
               }>
                 <div class="max-h-96 overflow-auto">
-                  <table class="w-full text-sm table-fixed">
+                  <table class="data-table w-full text-sm table-fixed">
                     <thead class="bg-base sticky top-0 z-10">
                       <tr class="bg-base">
                         <th class="text-left px-4 py-2 text-xs font-medium text-muted w-3/5">Name</th>
@@ -1257,12 +1283,9 @@ const DeviceDetail: Component = () => {
                     <tbody>
                       <For each={filteredParams()}>
                         {(param) => (
-                          <tr 
-                            class="border-t border-subtle/50 hover:bg-elevated/30 cursor-pointer"
-                            onClick={() => setSelectedParam(param)}
-                          >
-                            <td class="px-4 py-2 text-secondary font-mono text-xs truncate" title={param.name}>{param.name}</td>
-                            <td class="px-4 py-2 text-primary text-xs truncate max-w-xs" title="Click to view full">
+                          <tr class="border-t border-subtle/50 hover:bg-elevated/30">
+                            <td class="px-4 py-2 text-secondary font-mono text-xs truncate" title={param.name}><button type="button" class="data-link font-mono text-left" onClick={() => setSelectedParam(param)}>{param.name}</button></td>
+                            <td class="px-4 py-2 text-primary text-xs truncate max-w-xs">
                               {displayParameterValue(param.name, param.value).length > 100 ? displayParameterValue(param.name, param.value).slice(0, 100) + '...' : displayParameterValue(param.name, param.value)}
                             </td>
                           </tr>
@@ -1277,19 +1300,12 @@ const DeviceDetail: Component = () => {
         )}
       </Show>
 
-	  {/* Factory reset step-up confirmation */}
-	  <Show when={showFactoryResetModal()}>
-		<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={closeFactoryResetModal}>
-		  <div class="card p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-			<div class="flex items-start justify-between gap-4 mb-4">
-			  <div>
-				<h3 class="text-sm font-semibold text-rose-400">Factory reset device</h3>
-				<p class="text-xs text-muted mt-1">Semua konfigurasi CPE akan dihapus. Tindakan ini tidak dapat dibatalkan.</p>
-			  </div>
-			  <button onClick={closeFactoryResetModal} class="text-muted hover:text-secondary" aria-label="Close"><X size={18} /></button>
-			</div>
-			<label class="block text-xs text-muted mb-1.5">Current account password</label>
-			<input
+		  {/* Factory reset step-up confirmation */}
+		  <Show when={showFactoryResetModal()}>
+			<Dialog title={`Factory reset ${serial()}?`} description="All CPE configuration will be erased and service may not recover automatically. This operation cannot be undone." size="small" closeOnBackdrop={false} onClose={closeFactoryResetModal} actions={<><button onClick={closeFactoryResetModal} class="btn btn-secondary">Cancel</button><button onClick={handleFactoryReset} disabled={!factoryResetPassword() || actionLoading() !== null} class="btn btn-danger">Confirm factory reset</button></>}>
+				<label for="factory-reset-password" class="block text-xs text-muted mb-1.5">Current SKYACS account password</label>
+				<input
+				  id="factory-reset-password"
 			  type="password"
 			  value={factoryResetPassword()}
 			  onInput={(e) => setFactoryResetPassword(e.currentTarget.value)}
@@ -1298,39 +1314,21 @@ const DeviceDetail: Component = () => {
 			  autocomplete="current-password"
 			  autofocus
 			/>
-			<div class="flex justify-end gap-2 mt-5">
-			  <button onClick={closeFactoryResetModal} class="btn btn-secondary">Cancel</button>
-			  <button onClick={handleFactoryReset} disabled={!factoryResetPassword() || actionLoading() !== null} class="btn btn-danger">Confirm factory reset</button>
-			</div>
-		  </div>
-		</div>
-	  </Show>
+			</Dialog>
+		  </Show>
 
       {/* Parameter Detail Modal */}
       <Show when={selectedParam()}>
-        <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setSelectedParam(null)}>
-          <div class="card p-5 w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="text-sm font-medium text-secondary">Parameter Detail</h3>
-              <button onClick={() => setSelectedParam(null)} class="text-muted hover:text-secondary">
-                <X size={18} />
-              </button>
-            </div>
+        <Dialog title="CWMP parameter detail" description="Full parameter path and the latest value stored from this CPE." size="large" onClose={() => setSelectedParam(null)} actions={<button onClick={() => setSelectedParam(null)} class="btn btn-secondary">Close parameter detail</button>}>
             <div class="mb-3">
-              <label class="text-xs text-muted">Name</label>
+              <span class="text-xs text-muted">Parameter path</span>
               <p class="text-sky-400 font-mono text-sm break-all">{selectedParam()?.name}</p>
             </div>
             <div class="flex-1 overflow-auto">
-              <label class="text-xs text-muted">Value</label>
+              <span class="text-xs text-muted">Stored value</span>
               <pre class="mt-1 p-3 bg-elevated/50 rounded-lg text-primary text-sm font-mono whitespace-pre-wrap break-all overflow-auto max-h-96">{selectedParam() ? displayParameterValue(selectedParam()!.name, selectedParam()!.value) : ''}</pre>
             </div>
-            <div class="mt-4 flex justify-end">
-              <button onClick={() => setSelectedParam(null)} class="btn btn-secondary">
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
+        </Dialog>
       </Show>
 
 

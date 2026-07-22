@@ -4,6 +4,7 @@ import { Router, Route, Navigate } from '@solidjs/router';
 import { AuthProvider, useAuth } from './lib/auth';
 import { useTheme } from './lib/theme';
 import Layout from './components/Layout';
+import { FeedbackProvider } from './components/Feedback';
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Devices = lazy(() => import('./pages/Devices'));
@@ -31,18 +32,20 @@ const ProtectedLayout: ParentComponent = (props) => {
 const App: Component = () => {
   return (
     <AuthProvider>
-      <Router>
-        <Route path="/login" component={Login} />
-        <Route path="/" component={ProtectedLayout}>
-          <Route path="/" component={Dashboard} />
-          <Route path="/devices" component={Devices} />
-          <Route path="/device/:serial" component={DeviceDetail} />
-          <Route path="/faults" component={Faults} />
-          <Route path="/firmwares" component={Firmwares} />
-          <Route path="/security" component={Security} />
-          <Route path="/settings" component={Settings} />
-        </Route>
-      </Router>
+      <FeedbackProvider>
+        <Router>
+          <Route path="/login" component={Login} />
+          <Route path="/" component={ProtectedLayout}>
+            <Route path="/" component={Dashboard} />
+            <Route path="/devices" component={Devices} />
+            <Route path="/device/:serial" component={DeviceDetail} />
+            <Route path="/faults" component={Faults} />
+            <Route path="/firmwares" component={Firmwares} />
+            <Route path="/security" component={Security} />
+            <Route path="/settings" component={Settings} />
+          </Route>
+        </Router>
+      </FeedbackProvider>
     </AuthProvider>
   );
 };

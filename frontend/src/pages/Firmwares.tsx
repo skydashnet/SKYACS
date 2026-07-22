@@ -4,12 +4,15 @@ import { Upload, Trash2, HardDrive, Package } from 'lucide-solid';
 import { api, type Firmware } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import PageHeader from '../components/PageHeader';
+import { useFeedback } from '../components/Feedback';
+import { EmptyState, ResourceError } from '../components/ResourceState';
 
 const Firmwares: Component = () => {
   const { isFullAccess } = useAuth();
+  const { confirm, notify } = useFeedback();
   const [firmwares, { refetch }] = createResource(() => api.getFirmwares());
   const [uploading, setUploading] = createSignal(false);
-  const [message, setMessage] = createSignal<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [validation, setValidation] = createSignal<{ file?: string; version?: string }>({});
 
   const [formData, setFormData] = createSignal({
     version: '',
@@ -20,45 +23,43 @@ const Firmwares: Component = () => {
 
   let fileInputRef: HTMLInputElement | undefined;
 
-  const showMessage = (type: 'success' | 'error', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 5000);
-  };
-
   const handleUpload = async () => {
     const file = fileInputRef?.files?.[0];
+    const errors: { file?: string; version?: string } = {};
     if (!file) {
-      showMessage('error', 'Pilih file firmware terlebih dahulu');
-      return;
+      errors.file = 'Select a firmware artifact before starting the upload.';
     }
 
     const data = formData();
     if (!data.version.trim()) {
-      showMessage('error', 'Version wajib diisi');
-      return;
+      errors.version = 'Enter the vendor firmware version exactly as it should appear in deployment records.';
     }
+    setValidation(errors);
+    if (Object.keys(errors).length > 0 || !file) return;
 
     setUploading(true);
     try {
       await api.uploadFirmware(file, data.version, data.manufacturer, data.product_class, data.description);
-      showMessage('success', 'Firmware berhasil diupload');
-      refetch();
+      notify({ tone: 'success', title: 'Firmware artifact uploaded', message: `${file.name} is available for controlled CPE deployment.` });
+      await refetch();
       setFormData({ version: '', manufacturer: '', product_class: '', description: '' });
+      setValidation({});
       if (fileInputRef) fileInputRef.value = '';
     } catch (err) {
-      showMessage('error', 'Upload gagal: ' + (err as Error).message);
+      notify({ tone: 'error', title: 'Firmware upload failed', message: 'The artifact was not added to the library. Correct the reported issue and retry.', detail: (err as Error).message, persistent: true });
+    } finally {
+      setUploading(false);
     }
-    setUploading(false);
   };
 
   const handleDelete = async (id: number, filename: string) => {
-    if (!confirm(`Hapus firmware "${filename}"?`)) return;
+    if (!await confirm({ title: `Delete ${filename}?`, description: 'The artifact will no longer be available for new firmware tasks. Existing task records remain in the audit history.', confirmLabel: 'Delete firmware', tone: 'danger' })) return;
     try {
       await api.deleteFirmware(id);
-      showMessage('success', 'Firmware dihapus');
-      refetch();
+      notify({ tone: 'success', title: 'Firmware artifact deleted', message: filename });
+      await refetch();
     } catch (err) {
-      showMessage('error', 'Gagal hapus: ' + (err as Error).message);
+      notify({ tone: 'error', title: 'Could not delete firmware', message: 'The artifact remains available. Retry after checking active deployment references.', detail: (err as Error).message, persistent: true });
     }
   };
 
@@ -74,41 +75,44 @@ const Firmwares: Component = () => {
     <div class="space-y-6">
       <PageHeader title="Firmware library" description="Validated artifacts ready for controlled CPE deployment." />
 
-      <Show when={message()}>
-        <div class={`p-3 rounded-md text-sm ${message()?.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
-          {message()?.text}
-        </div>
-      </Show>
-
-      {/* Upload Form */}
       <Show when={isFullAccess()}><div class="card p-5">
         <h2 class="text-sm font-medium text-secondary mb-4 flex items-center gap-2">
           <Upload size={14} />
-          Upload Firmware Baru
+          Upload firmware artifact
         </h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label class="block text-xs text-muted mb-1.5">File Firmware</label>
+            <label for="firmware-file" class="block text-xs text-muted mb-1.5">Firmware file</label>
             <input
+              id="firmware-file"
               ref={fileInputRef}
               type="file"
               accept=".bin,.img,.tar,.gz,.zip"
               class="w-full px-3 py-2 bg-surface border border-default rounded-[3px] text-sm text-secondary file:mr-3 file:py-1 file:px-3 file:rounded-[2px] file:border-0 file:bg-sky-600 file:text-white file:text-xs file:cursor-pointer"
+              aria-invalid={Boolean(validation().file)}
+              aria-describedby={validation().file ? 'firmware-file-error' : undefined}
             />
+            <Show when={validation().file}><p id="firmware-file-error" class="field-error">{validation().file}</p></Show>
           </div>
           <div>
-            <label class="block text-xs text-muted mb-1.5">Version *</label>
+            <label for="firmware-version" class="block text-xs text-muted mb-1.5">Firmware version <span aria-hidden="true">*</span></label>
             <input
+              id="firmware-version"
               type="text"
               value={formData().version}
               onInput={(e) => setFormData({ ...formData(), version: e.currentTarget.value })}
               placeholder="e.g. V5R019C00S100"
               class="input"
+              required
+              aria-invalid={Boolean(validation().version)}
+              aria-describedby={validation().version ? 'firmware-version-error' : undefined}
             />
+            <Show when={validation().version}><p id="firmware-version-error" class="field-error">{validation().version}</p></Show>
           </div>
           <div>
-            <label class="block text-xs text-muted mb-1.5">Manufacturer</label>
+            <label for="firmware-manufacturer" class="block text-xs text-muted mb-1.5">Manufacturer</label>
             <input
+              id="firmware-manufacturer"
               type="text"
               value={formData().manufacturer}
               onInput={(e) => setFormData({ ...formData(), manufacturer: e.currentTarget.value })}
@@ -117,8 +121,9 @@ const Firmwares: Component = () => {
             />
           </div>
           <div>
-            <label class="block text-xs text-muted mb-1.5">Product Class</label>
+            <label for="firmware-product-class" class="block text-xs text-muted mb-1.5">Product class</label>
             <input
+              id="firmware-product-class"
               type="text"
               value={formData().product_class}
               onInput={(e) => setFormData({ ...formData(), product_class: e.currentTarget.value })}
@@ -127,11 +132,12 @@ const Firmwares: Component = () => {
             />
           </div>
           <div class="md:col-span-2">
-            <label class="block text-xs text-muted mb-1.5">Description</label>
+            <label for="firmware-description" class="block text-xs text-muted mb-1.5">Deployment notes</label>
             <textarea
+              id="firmware-description"
               value={formData().description}
               onInput={(e) => setFormData({ ...formData(), description: e.currentTarget.value })}
-              placeholder="Optional description"
+              placeholder="Optional compatibility or rollout notes"
               rows={2}
               class="input resize-none"
             />
@@ -143,11 +149,10 @@ const Firmwares: Component = () => {
           class="btn btn-primary mt-4"
         >
           <Upload size={14} />
-          {uploading() ? 'Uploading...' : 'Upload Firmware'}
+          {uploading() ? 'Uploading artifact…' : 'Upload firmware'}
         </button>
       </div></Show>
 
-      {/* Firmware List */}
       <div class="card overflow-hidden">
         <div class="p-5 border-b border-subtle">
           <h2 class="text-sm font-medium text-secondary flex items-center gap-2">
@@ -155,13 +160,12 @@ const Firmwares: Component = () => {
             Firmware Library ({firmwares()?.length || 0})
           </h2>
         </div>
-        <Show when={(firmwares()?.length || 0) > 0} fallback={
-          <div class="p-12 text-center">
-            <HardDrive size={32} class="mx-auto text-muted opacity-50 mb-2" />
-            <p class="text-muted text-sm">Belum ada firmware yang diupload</p>
-          </div>
+        <Show when={firmwares.loading}><div class="p-4 space-y-3" aria-label="Loading firmware library"><div class="skeleton h-8 w-full" /><div class="skeleton h-8 w-4/5" /></div></Show>
+        <Show when={firmwares.error}><ResourceError title="Firmware library is unavailable" description="SKYACS could not retrieve the artifact inventory. No firmware data was changed." onRetry={() => refetch()} /></Show>
+        <Show when={!firmwares.loading && !firmwares.error && (firmwares()?.length || 0) > 0} fallback={!firmwares.loading && !firmwares.error ?
+          <EmptyState icon={<HardDrive size={22} />} title="No firmware artifacts are stored" description={isFullAccess() ? 'Upload a vendor firmware file with an exact version and compatibility scope before creating a deployment task.' : 'A full-access operator must upload and validate an artifact before it can be selected for deployment.'} /> : undefined
         }>
-          <table class="w-full">
+          <div class="overflow-x-auto"><table class="data-table w-full min-w-[720px]">
             <thead>
               <tr class="border-b border-subtle">
                 <th class="px-4 py-3 text-left text-xs font-medium text-muted">Filename</th>
@@ -177,7 +181,7 @@ const Firmwares: Component = () => {
                 {(fw: Firmware) => (
                   <tr class="border-t border-subtle/50 hover:bg-elevated/30 transition-fast">
                     <td class="px-4 py-3 text-primary font-mono text-sm">{fw.filename}</td>
-                    <td class="px-4 py-3"><span class="badge badge-success">{fw.version}</span></td>
+                    <td class="px-4 py-3 font-mono text-xs text-secondary">{fw.version}</td>
                     <td class="px-4 py-3 text-secondary text-sm">{fw.manufacturer || '-'}</td>
                     <td class="px-4 py-3 text-secondary text-sm">{formatSize(fw.file_size)}</td>
                     <td class="px-4 py-3 text-muted text-xs">{formatDate(fw.created_at)}</td>
@@ -194,12 +198,12 @@ const Firmwares: Component = () => {
                 )}
               </For>
             </tbody>
-          </table>
+          </table></div>
         </Show>
       </div>
 
       <p class="text-muted text-xs">
-        Untuk push firmware ke device, buka halaman Device Detail dan gunakan tombol "Download Firmware".
+        To deploy an artifact, open a CPE record and create a controlled firmware download task.
       </p>
     </div>
   );

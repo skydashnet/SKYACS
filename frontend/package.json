@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "check:ui": "node ../scripts/check-ui-standards.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },

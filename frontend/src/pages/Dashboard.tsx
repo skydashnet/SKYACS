@@ -1,6 +1,9 @@
 import type { Component } from 'solid-js';
 import { createMemo, createResource, For, Show } from 'solid-js';
+import { A } from '@solidjs/router';
+import { RefreshCw, Router } from 'lucide-solid';
 import PageHeader from '../components/PageHeader';
+import { EmptyState, ResourceError } from '../components/ResourceState';
 import { api } from '../lib/api';
 
 interface DistributionListProps {
@@ -46,8 +49,12 @@ const DistributionList: Component<DistributionListProps> = (props) => {
 };
 
 const Dashboard: Component = () => {
-  const [stats] = createResource(() => api.getDeviceStats());
-  const [analytics] = createResource(() => api.getDeviceAnalytics());
+  const [dashboard, { refetch }] = createResource(async () => {
+    const [stats, analytics] = await Promise.all([api.getDeviceStats(), api.getDeviceAnalytics()]);
+    return { stats, analytics, fetchedAt: new Date() };
+  });
+  const stats = createMemo(() => dashboard()?.stats);
+  const analytics = createMemo(() => dashboard()?.analytics);
   const onlinePercent = createMemo(() => {
     const total = stats()?.total ?? 0;
     return total > 0 ? Math.round(((stats()?.online ?? 0) / total) * 1000) / 10 : 0;
@@ -56,18 +63,40 @@ const Dashboard: Component = () => {
   return (
     <div class="space-y-4">
       <PageHeader
-        title="Network overview"
+        title="Fleet status"
         description="Current fleet reachability, contact recency, health thresholds, and hardware mix."
-        status={<span class="inline-flex items-center gap-2 text-[11px] text-muted"><span class="w-1.5 h-1.5 bg-emerald-500" />Live database view</span>}
-      />
+        status={<span class="inline-flex items-center gap-2 text-[11px] text-muted"><span class="w-1.5 h-1.5 bg-emerald-500" aria-hidden="true" />{dashboard.loading ? 'Refreshing fleet data' : dashboard()?.fetchedAt ? `Updated ${dashboard()!.fetchedAt.toLocaleTimeString()}` : 'Update unavailable'}</span>}
+      >
+        <button type="button" class="btn btn-secondary" onClick={() => refetch()} disabled={dashboard.loading}><RefreshCw size={14} />Refresh fleet data</button>
+      </PageHeader>
 
-      <Show when={(analytics()?.total ?? 0) > (analytics()?.sampled ?? 0)}>
+      <Show when={!dashboard.loading && !dashboard.error && (stats()?.total ?? 0) === 0}>
+        <div class="data-panel"><EmptyState
+          icon={<Router size={22} />}
+          title="No CPEs have reported to SKYACS"
+          description="The fleet register will populate after a device sends its first CWMP Inform. Verify the published CWMP endpoint and the CPE ACS URL."
+          action={<A class="btn btn-secondary" href="/settings">Review CWMP connection settings</A>}
+        /></div>
+      </Show>
+
+      <Show when={!dashboard.loading && !dashboard.error && (analytics()?.total ?? 0) > (analytics()?.sampled ?? 0)}>
         <div class="px-4 py-3 border border-amber-500/30 text-amber-400 text-xs">
           Analytics use the most recent {analytics()?.sampled.toLocaleString()} of {analytics()?.total.toLocaleString()} devices; fleet totals remain exact.
         </div>
       </Show>
 
-      <Show when={!stats.error} fallback={<div class="px-4 py-3 border border-red-500/30 text-red-400 text-xs">Unable to load fleet telemetry. Verify the API and database connection.</div>}>
+      <Show when={dashboard.loading}>
+        <div class="ops-register fleet-register" aria-label="Loading fleet status">
+          <For each={[1, 2, 3, 4]}>{() => <div class="ops-register-cell"><div class="skeleton h-3 w-24" /><div class="skeleton h-7 w-16 mt-3" /><div class="skeleton h-2 w-32 mt-3" /></div>}</For>
+        </div>
+        <div class="data-panel"><div class="data-panel-body space-y-3"><div class="skeleton h-3 w-40" /><div class="skeleton h-5 w-full" /><div class="skeleton h-5 w-4/5" /></div></div>
+      </Show>
+
+      <Show when={dashboard.error}>
+        <div class="data-panel"><ResourceError title="Fleet telemetry is unavailable" description="SKYACS could not read the current device statistics. Confirm the API and database are reachable, then retry." onRetry={() => refetch()} /></div>
+      </Show>
+
+      <Show when={!dashboard.loading && !dashboard.error && (stats()?.total ?? 0) > 0}>
         <dl class="ops-register fleet-register" aria-label="Fleet status register">
           <div class="ops-register-cell">
             <dt>Managed devices</dt>

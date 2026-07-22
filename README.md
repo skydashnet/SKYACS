@@ -16,10 +16,32 @@
 SKYACS is a standalone TR-069/CWMP control plane for CPE inventory, monitoring, provisioning, and configuration. Its CWMP server, management API, scheduler, database layer, and web console run as one independent platform without requiring GenieACS.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="SKYACS network overview dashboard" width="1280" />
+  <img src="docs/screenshots/dashboard.png" alt="SKYACS fleet status dashboard" width="1280" />
   <br />
-  <sub>Network overview with representative lab telemetry.</sub>
+  <sub>Fleet status with representative lab telemetry.</sub>
 </p>
+
+## Console tour
+
+The screenshots below use representative lab data and do not contain production credentials or customer records.
+
+<table>
+  <tr>
+    <td width="50%"><strong>Operator sign in</strong><br /><img src="docs/screenshots/login.png" alt="SKYACS operator sign-in screen" /></td>
+    <td width="50%"><strong>CPE inventory</strong><br /><img src="docs/screenshots/devices.png" alt="SKYACS searchable CPE inventory" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>CPE record</strong><br /><img src="docs/screenshots/device-detail.png" alt="SKYACS CPE record with health, WAN, and Wi-Fi details" /></td>
+    <td width="50%"><strong>CWMP faults</strong><br /><img src="docs/screenshots/faults.png" alt="SKYACS CWMP fault investigation screen" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>Firmware library</strong><br /><img src="docs/screenshots/firmwares.png" alt="SKYACS firmware artifact library" /></td>
+    <td width="50%"><strong>Access controls</strong><br /><img src="docs/screenshots/security.png" alt="SKYACS device admission and operator audit screen" /></td>
+  </tr>
+  <tr>
+    <td colspan="2"><strong>System settings</strong><br /><img src="docs/screenshots/settings.png" alt="SKYACS operator, provisioning, and connection settings" /></td>
+  </tr>
+</table>
 
 > **Project status:** Beta. Validate every device workflow in a lab and maintain a recovery path before running bulk configuration changes or firmware upgrades.
 
@@ -47,6 +69,8 @@ SKYACS is a standalone TR-069/CWMP control plane for CPE inventory, monitoring, 
 | PostgreSQL | `5432/tcp` | Persistent operational state |
 
 The backend uses Go 1.25, GORM, and PostgreSQL. The frontend uses SolidJS, TypeScript, Tailwind CSS, and Vite.
+
+Console changes follow the documented [SKYACS UI/UX standard](docs/ui-ux-standard.md), including domain terminology, interaction states, responsive behavior, accessibility, and reusable component contracts.
 
 ## Quick start
 
@@ -181,6 +205,7 @@ go run github.com/securego/gosec/v2/cmd/gosec@v2.22.9 -quiet ./...
 cd ../frontend
 npm ci --include=dev
 npm audit
+npm run check:ui
 npm run build
 
 cd ..
